@@ -199,7 +199,7 @@ function updateProgress() {
         const month = ("0" + (finishedDate.getMonth()+1)).slice(-2);
         const day = ("0" + finishedDate.getDate()).slice(-2);
         const dateKey = `${year}-${month}-${day}`;
-        finishedPerDay[dateKey] = (finishedPerDay[dateKey] || 0) + 1;
+        finishedPerDay[dateKey] = (finishedPerDay[key] || 0) + 1;
       }
     });
 
@@ -340,8 +340,7 @@ function submitRating(ratingValue) {
       return;
     }
     if (!globalDB || !currentTableName || !currentGroupCode) return;
-    // Use string interpolation to fetch existing rating since SQL.js exec() doesn't support parameters
-    const result = globalDB.exec(`SELECT Rating FROM "${currentTableName}" WHERE "code_full" = '${currentGroupCode}' LIMIT 1`);
+    // Use string interpolation to fetch existing rating since SQL.js exec(`SELECT Rating FROM "${currentTableName}" WHERE "code_full" = '${currentGroupCode}' LIMIT 1`);
     let existingRating = "";
     if (result.length && result[0].values.length) {
       existingRating = result[0].values[0][0] || "";
@@ -368,7 +367,7 @@ function submitRating(ratingValue) {
     } else {
       console.warn("ratingModal element not found, skipping closeRatingModal");
     }
-    // Refresh view - if single task, refresh its display, else refresh table
+    // Refresh view - if singleTask, refresh its display, else refresh table
     if (showingSingleRandomTask) {
       displaySingleTask(currentGroupCode, true);
     } else {
@@ -460,3 +459,7 @@ window.addEventListener('beforeunload', function (e) {
 });
 
 module.exports = { persistDatabase };
+
+</final_file_content>
+
+IMPORTANT: For any future changes to this file, use the final_file_content shown above as your reference. This content reflects the current state of the file, including any auto-formatting (e.g., if you used single quotes but the formatter converted them to double quotes). Always base your SEARCH/REPLACE operations on this final version to ensure accuracy.
