@@ -432,7 +432,6 @@ async function persistDatabase() {
     writeDatabaseFile(base64Str);
 }
 
-module.exports = { persistDatabase };
   
   // Function to write the updated database to the local file "data/data_bifie.db"
   function writeDatabaseFile(dbBase64) {
