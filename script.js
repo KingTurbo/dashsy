@@ -199,7 +199,7 @@ function updateProgress() {
         const month = ("0" + (finishedDate.getMonth()+1)).slice(-2);
         const day = ("0" + finishedDate.getDate()).slice(-2);
         const dateKey = `${year}-${month}-${day}`;
-        finishedPerDay[dateKey] = (finishedPerDay[dateKey] || 0) + 1;
+        finishedPerDay[dateKey] = (finishedPerDay[key] || 0) + 1;
       }
     });
 
@@ -217,7 +217,7 @@ function updateProgress() {
       }
     });
     const totalTasks = uniqueTasks.size;
-    const unfinishedTasksCount = totalTasks - finishedTasks.size;
+    let unfinishedTasksCount = totalTasks - finishedTasks.size;
     document.getElementById("unfinishedCount").textContent = "Unfinished tasks: " + unfinishedTasksCount + " / " + totalTasks;
 
     // Prepare data for chart: sort dates ascending, with fallback if no finished tasks are found
@@ -304,7 +304,7 @@ function markTaskAsDone(codeFull) {
   try {
     if (!globalDB || !currentTableName) return;
     const now = new Date().toISOString();
-    // Retrieve existing finished value
+    // Retrieve existingFinished value
     const result = globalDB.exec(`SELECT finished FROM "${currentTableName}" WHERE "code_full" = '${codeFull}' LIMIT 1`);
     let existingFinished = "";
     if (result.length && result[0].values.length) {
@@ -340,8 +340,7 @@ function submitRating(ratingValue) {
       return;
     }
     if (!globalDB || !currentTableName || !currentGroupCode) return;
-    // Use string interpolation to fetch existing rating since SQL.js exec() doesn't support parameters
-    const result = globalDB.exec(`SELECT Rating FROM "${currentTableName}" WHERE "code_full" = '${currentGroupCode}' LIMIT 1`);
+    // Use string interpolation to fetch existing rating since SQL.js exec(`SELECT Rating FROM "${currentTableName}" WHERE "code_full" = '${currentGroupCode}' LIMIT 1`);
     let existingRating = "";
     if (result.length && result[0].values.length) {
       existingRating = result[0].values[0][0] || "";
@@ -368,7 +367,7 @@ function submitRating(ratingValue) {
     } else {
       console.warn("ratingModal element not found, skipping closeRatingModal");
     }
-    // Refresh view - if single task, refresh its display, else refresh table
+    // Refresh view - if singleTask, refresh its display, else refresh table
     if (showingSingleRandomTask) {
       displaySingleTask(currentGroupCode, true);
     } else {
@@ -453,10 +452,5 @@ function downloadDatabase() {
     handleError("Error downloading database:", error);
   }
 }
-});
-
-window.addEventListener('beforeunload', function (e) {
-  downloadDatabase();
-});
 
 module.exports = { persistDatabase };
