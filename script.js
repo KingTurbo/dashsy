@@ -413,7 +413,7 @@ function uint8ArrayToBase64(u8Arr) {
     }
   }
   
-  async function persistDatabase() {
+async function persistDatabase() {
     if (!globalDB) return;
     const exported = globalDB.export();
     const base64Str = uint8ArrayToBase64(exported);
@@ -423,14 +423,15 @@ function uint8ArrayToBase64(u8Arr) {
         const writable = await dbFileHandle.createWritable();
         await writable.write(base64Str);
         await writable.close();
-        console.log("Database auto-updated on local file.");
+        console.log("Database auto-updated on local file via handle.");
       } catch (err) {
-        console.error("Error auto-updating local file:", err);
+        console.error("Error auto-updating local file via handle:", err);
       }
     } else {
-      console.log("DB file handle not set; local file not auto-updated.");
+      console.log("DB file handle not set; proceeding to update database file.");
     }
-  }
+    writeDatabaseFile(base64Str);
+}
   
   // Function to write the updated database to the local file "data/data_bifie.db"
   function writeDatabaseFile(dbBase64) {
@@ -670,4 +671,3 @@ function uint8ArrayToBase64(u8Arr) {
       alert("Database markings cleared successfully.");
     }
   });
-  
