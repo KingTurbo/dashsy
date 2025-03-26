@@ -47,10 +47,6 @@ function uint8ArrayToBase64(u8Arr) {
       const SQL = await initSqlJs({
         locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
       });
-      const savedDB = localStorage.getItem('data_bifie_db');
-      if (savedDB) {
-        globalDB = new SQL.Database(base64ToUint8Array(savedDB));
-      } else {
       const response = await fetch('data/data_bifie.db?cache=' + new Date().getTime());
       const clonedResponse = response.clone();
       const text = await clonedResponse.text();
@@ -60,8 +56,7 @@ function uint8ArrayToBase64(u8Arr) {
         const uInt8Buffer = new Uint8Array(await response.arrayBuffer());
         globalDB = new SQL.Database(uInt8Buffer);
       }
-        persistDatabase();
-      }
+      persistDatabase();
       const tablesResult = globalDB.exec("SELECT name FROM sqlite_master WHERE type='table'");
       if (!tablesResult.length || !tablesResult[0].values.length) throw new Error('No tables found');
       currentTableName = tablesResult[0].values[0][0];
