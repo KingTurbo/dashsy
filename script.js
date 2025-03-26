@@ -41,16 +41,14 @@ function uint8ArrayToBase64(u8Arr) {
   let currentGroupCode = null;
   let filterUnfinishedActive = false;
   let showingSingleRandomTask = false; // Flag for single task display mode
+
+  let dbBase64 = null;
   
   async function initDatabase() {
     try {
       const SQL = await initSqlJs({
         locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
       });
-      const savedDB = localStorage.getItem('data_bifie_db');
-      if (savedDB) {
-        globalDB = new SQL.Database(base64ToUint8Array(savedDB));
-      } else {
       const response = await fetch('data/data_bifie.db?cache=' + new Date().getTime());
       const clonedResponse = response.clone();
       const text = await clonedResponse.text();
@@ -60,8 +58,8 @@ function uint8ArrayToBase64(u8Arr) {
         const uInt8Buffer = new Uint8Array(await response.arrayBuffer());
         globalDB = new SQL.Database(uInt8Buffer);
       }
-        persistDatabase();
-      }
+      dbBase64 = uint8ArrayToBase64(globalDB.export());
+      persistDatabase();
       const tablesResult = globalDB.exec("SELECT name FROM sqlite_master WHERE type='table'");
       if (!tablesResult.length || !tablesResult[0].values.length) throw new Error('No tables found');
       currentTableName = tablesResult[0].values[0][0];
@@ -320,6 +318,7 @@ function uint8ArrayToBase64(u8Arr) {
       // Update the finished field with the appended timestamp
       globalDB.run(`UPDATE "${currentTableName}" SET finished = '${newFinished}' WHERE "code_full" = '${codeFull}'`);
       persistDatabase();
+      updateDatabaseFile();
       closeDoneModal();
       if (showingSingleRandomTask) {
            loadData();
@@ -361,6 +360,7 @@ function uint8ArrayToBase64(u8Arr) {
       // Update the Rating column using string interpolation
       globalDB.run(`UPDATE "${currentTableName}" SET Rating = '${newRating}' WHERE "code_full" = '${currentGroupCode}'`);
       persistDatabase();
+      updateDatabaseFile();
       // Log the updated rating value for debugging
       const check = globalDB.exec(`SELECT Rating FROM "${currentTableName}" WHERE "code_full" = '${currentGroupCode}'`);
       console.log("Updated rating for", currentGroupCode, ":", check);
@@ -416,11 +416,11 @@ function uint8ArrayToBase64(u8Arr) {
 async function persistDatabase() {
     if (!globalDB) return;
     const exported = globalDB.export();
-    const base64Str = uint8ArrayToBase64(exported);
+    dbBase64 = uint8ArrayToBase64(exported);
     if (dbFileHandle) {
       try {
         const writable = await dbFileHandle.createWritable();
-        await writable.write(base64Str);
+        await writable.write(dbBase64);
         await writable.close();
         console.log("Database auto-updated on local file via handle.");
       } catch (err) {
@@ -429,12 +429,12 @@ async function persistDatabase() {
     } else {
       console.log("DB file handle not set; proceeding to update database file.");
     }
-    writeDatabaseFile(base64Str);
+    updateDatabaseFile();
 }
 
   
   // Function to write the updated database to the local file "data/data_bifie.db"
-  function writeDatabaseFile(dbBase64) {
+  function updateDatabaseFile() {
     console.log("Writing updated database to file: data/data_bifie.db");
     write_to_file("data/data_bifie.db", dbBase64);
   }
