@@ -424,14 +424,12 @@ async function persistDatabase() {
     } else {
       console.log("DB file handle not set; proceeding to update database file.");
     }
-    writeDatabaseFile(base64Str);
 }
 
   
   // Function to write the updated database to the local file "data/data_bifie.db"
   function writeDatabaseFile(dbBase64) {
     console.log("Writing updated database to file: data/data_bifie.db");
-    write_to_file("data/data_bifie.db", dbBase64);
   }
   
   // Pick and display a random unfinished task
