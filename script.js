@@ -47,6 +47,10 @@ function uint8ArrayToBase64(u8Arr) {
       const SQL = await initSqlJs({
         locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
       });
+      const savedDB = localStorage.getItem('data_bifie_db');
+      if (savedDB) {
+        globalDB = new SQL.Database(base64ToUint8Array(savedDB));
+      } else {
       const response = await fetch('data/data_bifie.db?cache=' + new Date().getTime());
       const clonedResponse = response.clone();
       const text = await clonedResponse.text();
@@ -56,7 +60,8 @@ function uint8ArrayToBase64(u8Arr) {
         const uInt8Buffer = new Uint8Array(await response.arrayBuffer());
         globalDB = new SQL.Database(uInt8Buffer);
       }
-      persistDatabase();
+        persistDatabase();
+      }
       const tablesResult = globalDB.exec("SELECT name FROM sqlite_master WHERE type='table'");
       if (!tablesResult.length || !tablesResult[0].values.length) throw new Error('No tables found');
       currentTableName = tablesResult[0].values[0][0];
@@ -84,7 +89,7 @@ function uint8ArrayToBase64(u8Arr) {
       const stmt = globalDB.exec(query);
       console.log("Query executed. stmt.length: " + stmt.length);
       const tableBody = document.getElementById('dashboard-body');
-      const header = document.getElementById("dashboard-header");
+      const header = document.getElementById('dashboard-header');
       tableBody.innerHTML = ''; // Clear previous results
       header.innerHTML = ''; // Clear previous header
   
@@ -424,12 +429,14 @@ async function persistDatabase() {
     } else {
       console.log("DB file handle not set; proceeding to update database file.");
     }
+    writeDatabaseFile(base64Str);
 }
 
   
   // Function to write the updated database to the local file "data/data_bifie.db"
   function writeDatabaseFile(dbBase64) {
     console.log("Writing updated database to file: data/data_bifie.db");
+    write_to_file("data/data_bifie.db", dbBase64);
   }
   
   // Pick and display a random unfinished task
@@ -485,7 +492,7 @@ async function persistDatabase() {
           stmt.bind([codeFull]);
   
           const tableBody = document.getElementById('dashboard-body');
-          const header = document.getElementById("dashboard-header");
+          const header = document.getElementById('dashboard-header');
           tableBody.innerHTML = ''; // Clear table body
           header.innerHTML = ''; // Clear table header
   
@@ -570,7 +577,7 @@ async function persistDatabase() {
       });
     
       // Search Input
-      document.getElementById('search').addEventListener('input', (event) => {
+      document.getElementById('search').addEventListener('click', (event) => {
         loadData(event.target.value); // Search resets single view
       });
     
