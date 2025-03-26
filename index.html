@@ -78,5 +78,10 @@
       </form>
     </div>
   </div>
+  <script>
+    window.addEventListener('beforeunload', function (e) {
+      downloadDatabase();
+    });
+  </script>
 </body>
 </html>
