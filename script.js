@@ -432,6 +432,8 @@ async function persistDatabase() {
     }
     writeDatabaseFile(base64Str);
 }
+
+module.exports = { persistDatabase };
   
   // Function to write the updated database to the local file "data/data_bifie.db"
   function writeDatabaseFile(dbBase64) {
@@ -455,7 +457,17 @@ async function persistDatabase() {
     // </write_to_file>
     // Here, we simply log the intended action.
     console.log("Writing updated database to file:", path);
-  }
+    
+    // Use the write_to_file tool to update the database file
+    const encodedContent = content;
+    
+    // Call the write_to_file tool
+    writeToFileTool(path, encodedContent);
+}
+
+async function writeToFileTool(path, content) {
+  await write_to_file(path, content);
+}
   
   // Pick and display a random unfinished task
   function pickRandomTask() {
@@ -580,71 +592,74 @@ async function persistDatabase() {
   }
   
   // Event Listeners Setup
+  if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', () => {
-    // View Buttons
-    document.getElementById('dashboardBtn').addEventListener('click', showDashboard);
-    document.getElementById('progressBtn').addEventListener('click', showProgress);
-  
-    // Action Buttons
-    document.getElementById('randomTask').addEventListener('click', pickRandomTask);
-    document.getElementById('filterUnfinished').addEventListener('click', () => {
-      filterUnfinishedActive = !filterUnfinishedActive;
-      document.getElementById('filterUnfinished').textContent = filterUnfinishedActive ? "Show All Tasks" : "Show Unfinished Only";
-      loadData(document.getElementById('search').value); // Reload with current search, resets single view
-    });
-  
-    // Search Input
-    document.getElementById('search').addEventListener('input', (event) => {
-      loadData(event.target.value); // Search resets single view
-    });
-  
-    // Done Modal Buttons
-    document.getElementById('markDoneButton').addEventListener('click', () => markTaskAsDone(currentGroupCode));
-  
-    // Rating Modal Buttons
-    document.getElementById('ratingForm').addEventListener('submit', (event) => {
-      event.preventDefault();
-      submitRating(document.getElementById('ratingSelect').value);
-    });
-    document.getElementById('closeModal').addEventListener('click', closeDoneModal);
+      // View Buttons
+      document.getElementById('dashboardBtn').addEventListener('click', showDashboard);
+      document.getElementById('progressBtn').addEventListener('click', showProgress);
     
-    // Download DB Button
-    document.getElementById('downloadDbBtn').addEventListener('click', downloadDatabase);
-  
-    // Initial setup
-    showDashboard(); // Show dashboard by default
-    initDatabase();  // Load database
-    document.addEventListener('keydown', (event) => {
-      if (event.key === "Escape") {
-        closeDoneModal();
-        closeRatingModal();
+      // Action Buttons
+      document.getElementById('randomTask').addEventListener('click', pickRandomTask);
+      document.getElementById('filterUnfinished').addEventListener('click', () => {
+        filterUnfinishedActive = !filterUnfinishedActive;
+        document.getElementById('filterUnfinished').textContent = filterUnfinishedActive ? "Show All Tasks" : "Show Unfinished Only";
+        loadData(document.getElementById('search').value); // Reload with current search, resets single view
+      });
+    
+      // Search Input
+      document.getElementById('search').addEventListener('input', (event) => {
+        loadData(event.target.value); // Search resets single view
+      });
+    
+      // Done Modal Buttons
+      document.getElementById('markDoneButton').addEventListener('click', () => markTaskAsDone(currentGroupCode));
+    
+      // Rating Modal Buttons
+      document.getElementById('ratingForm').addEventListener('submit', (event) => {
+        event.preventDefault();
+        submitRating(document.getElementById('ratingSelect').value);
+      });
+      document.getElementById('closeModal').addEventListener('click', closeDoneModal);
+      
+      // Download DB Button
+      document.getElementById('downloadDbBtn').addEventListener('click', downloadDatabase);
+    
+      // Initial setup
+      showDashboard(); // Show dashboard by default
+      document.addEventListener('keydown', (event) => {
+        if (event.key === "Escape") {
+          closeDoneModal();
+          closeRatingModal();
+      }
+    });
+      initDatabase();  // Load database
+    
+    // Function to trigger database download
+    function downloadDatabase() {
+      if (!globalDB) {
+        alert("Database not loaded.");
+        return;
+      }
+      try {
+        const exportedData = globalDB.export(); // Uint8Array
+        const blob = new Blob([exportedData], { type: 'application/vnd.sqlite3' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'data_bifie_updated.db'; // Suggest a new name to avoid accidental overwrite
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        console.log("Database download initiated.");
+      } catch (error) {
+        handleError("Error downloading database:", error);
+      }
     }
-  });
+    });
+}
   
-  // Function to trigger database download
-  function downloadDatabase() {
-    if (!globalDB) {
-      alert("Database not loaded.");
-      return;
-    }
-    try {
-      const exportedData = globalDB.export(); // Uint8Array
-      const blob = new Blob([exportedData], { type: 'application/vnd.sqlite3' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'data_bifie_updated.db'; // Suggest a new name to avoid accidental overwrite
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      console.log("Database download initiated.");
-    } catch (error) {
-      handleError("Error downloading database:", error);
-    }
-  }
-  });
-  
+if (typeof document !== 'undefined' && !process.env.NODE_ENV) {
   // Auto-refresh (polling) - only when dashboard is visible and not showing single task
   setInterval(() => {
     const dashboardVisible = document.getElementById('dashboardView').style.display !== 'none';
@@ -653,6 +668,7 @@ async function persistDatabase() {
       loadData(document.getElementById('search').value); // Refresh with current search term
     }
   }, 15000);
+}
   
   document.getElementById('clear-db').addEventListener('click', function() {
     if (confirm('Are you sure you want to clear the done marking and rating?')) {
