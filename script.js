@@ -417,7 +417,6 @@ async function persistDatabase() {
     if (!globalDB) return;
     const exported = globalDB.export();
     const base64Str = uint8ArrayToBase64(exported);
-    localStorage.setItem('data_bifie_db', base64Str);
     if (dbFileHandle) {
       try {
         const writable = await dbFileHandle.createWritable();
@@ -437,37 +436,9 @@ module.exports = { persistDatabase };
   
   // Function to write the updated database to the local file "data/data_bifie.db"
   function writeDatabaseFile(dbBase64) {
-    // Using the write_to_file tool in our context, we can write the complete content.
-    // This function will be called from persistDatabase(), updating the database file.
-    // Since the write_to_file tool creates directories as needed, this will overwrite the file.
-    // The exported database is stored in base64, and initDatabase() will convert from base64 to Uint8Array.
-    // The local file now will contain the base64 string.
-    // In a real-world scenario, you might need to convert back to binary.
-    // For our client-side SQL.js environment, we are using base64 consistently.
-    writeContentToFile("data/data_bifie.db", dbBase64);
+    console.log("Writing updated database to file: data/data_bifie.db");
+    write_to_file("data/data_bifie.db", dbBase64);
   }
-  
-  // Helper function to interface with the write_to_file tool (simulated here)
-  function writeContentToFile(path, content) {
-    // This is a placeholder function. In our environment, you would use the write_to_file tool.
-    // For example, you might call:
-    // <write_to_file>
-    // <path>data/data_bifie.db</path>
-    // <content>[dbBase64]</content>
-    // </write_to_file>
-    // Here, we simply log the intended action.
-    console.log("Writing updated database to file:", path);
-    
-    // Use the write_to_file tool to update the database file
-    const encodedContent = content;
-    
-    // Call the write_to_file tool
-    writeToFileTool(path, encodedContent);
-}
-
-async function writeToFileTool(path, content) {
-  await write_to_file(path, content);
-}
   
   // Pick and display a random unfinished task
   function pickRandomTask() {
