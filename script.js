@@ -558,7 +558,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initial setup
   showDashboard(); // Show dashboard by default
   listenForDataUpdates(); // Start listening for Firestore updates
-  document.addEventListener('keydown', (event) => {
+    document.addEventListener('keydown', (event) => {
     if (event.key === "Escape") {
       closeDoneModal();
       closeRatingModal();
