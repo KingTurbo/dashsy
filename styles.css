@@ -116,3 +116,41 @@ body {
     font-weight: bold;
     margin-right: 5px;
   }
+
+
+  /* styles.css */
+
+/* ... other styles ... */
+
+#progressView {
+  /* Give the container a specific height */
+  /* You can use vh (viewport height), px, or other units */
+  height: 60vh; /* Example: 60% of the viewport height */
+  max-height: 500px; /* Optional: Prevent it from getting too tall on large screens */
+
+  /* Also good practice to manage width if needed */
+  width: 90%; /* Example: 90% of its parent (main) */
+  margin: 20px auto; /* Center it horizontally */
+
+  /* Crucial for Chart.js responsive behavior, especially with maintainAspectRatio:false */
+  position: relative;
+}
+
+
+
+#progressChart {
+  /* Canvas itself should usually fill its container */
+  /* Chart.js will handle the internal sizing */
+}
+
+/* Style for the gamification area if you add it */
+.gamification {
+   margin-top: 20px;
+   padding: 15px;
+   background-color: #eef;
+   border: 1px solid #ccd;
+   border-radius: 5px;
+   text-align: center;
+}
+
+/* ... rest of your styles ... */

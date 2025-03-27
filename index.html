@@ -79,11 +79,20 @@
           </tbody>
         </table>
       </div>
-      <!-- Progress analysis view -->
+
+
       <div id="progressView" style="display:none;">
         <canvas id="progressChart"></canvas>
-      <div id="unfinishedCount" style="margin-top:20px; text-align:center; font-weight:bold;"></div>
+        <div id="unfinishedCount" style="margin-top:20px; text-align:center; font-weight:bold;"></div>
+        <!-- ADD THIS DIV FOR GAMIFICATION OUTPUT -->
+        <div id="progressAnalysis" style="margin-top: 20px;">
+          <!-- Gamification content will be loaded here by script.js -->
+        </div>
       </div>
+
+
+
+
     </main>
     <div id="error" style="color:red;"></div>
     <!-- Ensure script.js is loaded as a module to use imports if needed, or access window.firebaseDB -->
