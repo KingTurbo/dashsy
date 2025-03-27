@@ -510,12 +510,16 @@ async function pickRandomTask() {
       return;
     }
 
-    // Pick random item from the filtered list
-    const randomItem = unfinishedItems[Math.floor(Math.random() * unfinishedItems.length)];
-    console.log("Randomly selected item ID:", randomItem.id);
+    // Pick random codeFull from the filtered list
+    const codeFulls = [...new Set(unfinishedItems.map(item => item.codeFull))];
+    const randomCodeFull = codeFulls[Math.floor(Math.random() * codeFulls.length)];
+    console.log("Randomly selected codeFull:", randomCodeFull);
 
-    // Display only this task
-    displaySingleTask(randomItem.id, true); // true to update the output div
+    // Find all items with the selected codeFull
+    const itemsToDisplay = dashboardItems.filter(item => item.codeFull === randomCodeFull);
+
+    // Display those tasks
+    displayTasks(itemsToDisplay);
 
   } catch (error) {
     handleError("Error picking random task:", error);
@@ -523,6 +527,40 @@ async function pickRandomTask() {
     showingSingleRandomTask = false; // Ensure flag is reset on error
     renderTable(); // Show full table on error
   }
+}
+
+function displayTasks(tasks) {
+  const tableBody = document.getElementById('dashboard-body');
+  const header = document.getElementById("dashboard-header");
+  const outputDiv = document.getElementById("randomTaskOutput");
+  tableBody.innerHTML = ''; // Clear table body
+  header.innerHTML = ''; // Clear table header
+  outputDiv.innerHTML = ''; // Clear output div
+
+  if (!tasks || tasks.length === 0) {
+    tableBody.innerHTML = '<tr><td colspan="100%">No tasks to display.</td></tr>';
+    return;
+  }
+
+  // Determine columns from the first item
+  const columns = Object.keys(tasks[0]).filter(key => key !== 'id');
+
+  // Generate header
+  let headerRow = document.createElement("tr");
+  columns.forEach(colName => {
+    let th = document.createElement("th");
+    th.textContent = colName;
+    headerRow.appendChild(th);
+  });
+  header.appendChild(headerRow);
+
+  // Create and append table rows
+  tasks.forEach(task => {
+    const tr = createTableRow(task, columns);
+    tableBody.appendChild(tr);
+  });
+
+  showingSingleRandomTask = true;
 }
 
 // Display details and table row(s) for a single item ID
