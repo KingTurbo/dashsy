@@ -27,20 +27,51 @@ let unsubscribeSnapshot = null; // To detach the listener later if needed
 
 // --- Helper Functions ---
 
+// Generic error handler (Moved definition BEFORE its first use)
+function handleError(context, error) {
+  console.error(context, error);
+  const errorDiv = document.getElementById('error');
+  if (errorDiv) {
+    // Display a user-friendly message, log the full error to console
+    let message = `Error: ${context}.`;
+    // Add more specific Firebase error info if available
+    if (error.code) {
+      message += ` (Code: ${error.code}). Check Firestore Security Rules and Network.`;
+    }
+     message += ` See console for details.`;
+    errorDiv.textContent = message;
+    errorDiv.style.display = 'block'; // Make sure the error div is visible
+  } else {
+    // Fallback alert if the error div doesn't exist
+    alert(`Error: ${context}. Code: ${error.code || 'N/A'}. Check console and Firestore Rules.`);
+  }
+}
+
+
 /* Format Firestore Timestamp or ISO date string into human-readable format: YYYY-MM-DD HH:mm */
 function formatDate(dateInput) {
   let date;
   if (dateInput instanceof Timestamp) {
     date = dateInput.toDate(); // Convert Firestore Timestamp to JS Date
   } else if (typeof dateInput === 'string') {
-    date = new Date(dateInput);
+    // Attempt to parse common date string formats, including ISO
+     try {
+      date = new Date(dateInput);
+    } catch (e) {
+      console.warn("Could not parse date string:", dateInput, e);
+      return dateInput; // Return original if parsing fails immediately
+    }
   } else if (dateInput instanceof Date) {
     date = dateInput;
   } else {
     return dateInput; // Return original if not a recognizable date format
   }
 
-  if (isNaN(date)) return dateInput; // Return original if parsing failed
+  // Check if the date object is valid after potential parsing
+  if (isNaN(date.getTime())) {
+      console.warn("Invalid date object after parsing:", dateInput);
+      return dateInput; // Return original if parsing resulted in an invalid date
+  }
 
   const year = date.getFullYear();
   const month = ("0" + (date.getMonth() + 1)).slice(-2);
@@ -50,15 +81,6 @@ function formatDate(dateInput) {
   return `${year}-${month}-${day} ${hour}:${minute}`;
 }
 
-// Generic error handler
-function handleError(context, error) {
-  console.error(context, error);
-  const errorDiv = document.getElementById('error');
-  if (errorDiv) {
-    // Display a user-friendly message, log the full error to console
-    errorDiv.textContent = `Error: ${context}. See console for details.`;
-  }
-}
 
 // --- Firestore Interaction Functions ---
 
@@ -68,6 +90,9 @@ function listenForDataUpdates() {
     unsubscribeSnapshot(); // Detach previous listener if exists
   }
   console.log("Setting up Firestore listener...");
+  const errorDiv = document.getElementById('error'); // Clear previous errors
+  if (errorDiv) errorDiv.style.display = 'none';
+
   const q = query(itemsCollectionRef); // Simple query for all documents
 
   unsubscribeSnapshot = onSnapshot(q, (querySnapshot) => {
@@ -84,8 +109,13 @@ function listenForDataUpdates() {
     if (document.getElementById('progressView').style.display !== 'none') {
       updateProgress();
     }
+     // Clear error message on successful update
+     if (errorDiv) errorDiv.style.display = 'none';
   }, (error) => {
+    // *** USE THE DEFINED handleError FUNCTION ***
     handleError("Error listening to Firestore:", error);
+    // Attempt to render the table even on error, it might show "No data" or cached data
+     renderTable();
   });
 }
 
@@ -113,9 +143,12 @@ async function updateTask(itemId, dataToUpdate) {
 async function addTask(newItemData) {
   console.log("Adding new item:", newItemData);
   // Add default fields if necessary, e.g., finished: null, Rating: null
+  // Ensure required fields expected by your app/rules are present
   const dataToAdd = {
       finished: null,
       Rating: null,
+      // Add other fields expected by your data structure if not provided
+      // For example: dateRelease: Timestamp.now() ?
       ...newItemData // User provided data overrides defaults
   };
   try {
@@ -130,13 +163,13 @@ async function addTask(newItemData) {
 // Delete a task (Example function)
 async function deleteTask(itemId) {
   if (!itemId) {
-    handleError("Update failed: No item ID provided.");
+    handleError("Delete failed: No item ID provided."); // Corrected error message context
     return;
   }
   // Find item details for confirmation message
   const itemToDelete = dashboardItems.find(item => item.id === itemId);
   const confirmMsg = itemToDelete
-    ? `Are you sure you want to delete task: ${itemToDelete.name || itemToDelete.code_full || itemId}?`
+    ? `Are you sure you want to delete task: ${itemToDelete.name || itemToDelete.codeFull || itemId}?` // Adjusted property name
     : `Are you sure you want to delete item ${itemId}?`;
 
   if (!confirm(confirmMsg)) {
@@ -166,8 +199,8 @@ function renderTable() {
   header.innerHTML = ''; // Clear previous header
   document.getElementById("randomTaskOutput").innerHTML = ""; // Clear random task display
 
-  if (!dashboardItems.length) {
-    tableBody.innerHTML = '<tr><td colspan="100%">No data found in Firestore collection.</td></tr>';
+  if (!dashboardItems || dashboardItems.length === 0) { // Added check for undefined dashboardItems
+    tableBody.innerHTML = '<tr><td colspan="100%">Loading data or no data found... Check Firestore connection and Rules.</td></tr>';
     return;
   }
 
@@ -182,12 +215,17 @@ function renderTable() {
     th.textContent = col;
     headerRow.appendChild(th);
   });
+  // Add an actions column header (optional, if you add delete buttons etc. to rows)
+  // let thAction = document.createElement("th");
+  // thAction.textContent = "Actions";
+  // headerRow.appendChild(thAction);
   header.appendChild(headerRow);
 
   // Filter items based on search term and unfinished filter
   const filteredItems = dashboardItems.filter(item => {
     // Search logic: check if search term exists in any field value (case-insensitive)
-    const itemString = Object.values(item).join(" ").toLowerCase();
+    // Ensure values are converted to string before searching
+    const itemString = Object.values(item).map(val => String(val ?? '')).join(" ").toLowerCase();
     const matchesSearch = currentSearchTerm === "" || itemString.includes(currentSearchTerm.toLowerCase());
 
     // Unfinished filter logic: check if 'finished' field is missing, null, or empty string
@@ -195,7 +233,9 @@ function renderTable() {
     if (item.hasOwnProperty('finished')) {
         const finishedValue = item.finished;
         // Consider null, undefined, empty string, or specific 'false' values as unfinished
+        // Also check for empty Timestamp objects if that's possible
         isUnfinished = !finishedValue || (typeof finishedValue === 'string' && finishedValue.trim() === '');
+         // If finishedValue could be an empty Timestamp, add a check: !(finishedValue instanceof Timestamp && finishedValue.seconds === 0)
     }
     const matchesFilter = !filterUnfinishedActive || isUnfinished;
 
@@ -225,9 +265,12 @@ function createTableRow(item, columns) {
     }
 
     // Attach click listener to the row
-    tr.addEventListener('click', () => {
+    tr.addEventListener('click', (event) => {
+       // Prevent triggering row click if a button inside the row was clicked (if you add buttons later)
+       if (event.target.tagName === 'BUTTON') return;
+
       currentItemId = itemId; // Store Firestore ID for modal actions
-      const codeFullValue = item.code_full || 'N/A'; // Get code_full for display
+      const codeFullValue = item.codeFull || 'N/A'; // Adjusted property name
       console.log("Row clicked. Item ID:", itemId, "code_full:", codeFullValue);
       openDoneModal(codeFullValue, itemId); // Pass ID to modal opener
     });
@@ -237,12 +280,13 @@ function createTableRow(item, columns) {
       const td = document.createElement('td');
       let cellValue = item[colName];
 
-      // Format 'finished' date if it exists and is not empty
+      // Format 'finished' date if it exists and is not empty/null
       if (colName === 'finished' && cellValue && (typeof cellValue !== 'string' || cellValue.trim() !== '')) {
-        // Handle potential multiple timestamps (if migrated from old format)
+        // Handle potential multiple timestamps (if migrated from old format) - Be cautious with this logic
         if (typeof cellValue === 'string' && cellValue.includes(',')) {
             const parts = cellValue.split(',').map(s => s.trim());
-            cellValue = parts[parts.length - 1]; // Use the last one
+            cellValue = parts[parts.length - 1]; // Use the last one - might be risky
+             console.warn("Multiple timestamps found in 'finished' field, using the last one:", cellValue);
         }
         td.textContent = formatDate(cellValue); // Format the date/timestamp
       } else {
@@ -250,6 +294,18 @@ function createTableRow(item, columns) {
       }
       tr.appendChild(td);
     });
+
+     // Add action buttons (example: delete button)
+    // const tdAction = document.createElement('td');
+    // const deleteButton = document.createElement('button');
+    // deleteButton.textContent = 'Delete';
+    // deleteButton.onclick = (event) => {
+    //     event.stopPropagation(); // Prevent row click listener
+    //     deleteTask(itemId);
+    // };
+    // tdAction.appendChild(deleteButton);
+    // tr.appendChild(tdAction);
+
     return tr;
 }
 
@@ -260,6 +316,11 @@ function updateProgress() {
       console.error('Chart.js library is not loaded');
       return;
     }
+    if (!dashboardItems || dashboardItems.length === 0) { // Added check
+        console.log("No items available to update progress chart.");
+         // Optionally clear or display a "no data" message on the chart
+        return;
+    }
 
     const finishedPerDay = {};
     let totalFinishedCount = 0;
@@ -268,9 +329,9 @@ function updateProgress() {
       if (finishedValue && (typeof finishedValue !== 'string' || finishedValue.trim() !== '')) {
         totalFinishedCount++;
         let dateToFormat = finishedValue;
-        // Handle potential multiple timestamps string
+        // Handle potential multiple timestamps string - Use with caution
         if (typeof finishedValue === 'string' && finishedValue.includes(',')) {
-            const parts = cellValue.split(',').map(s => s.trim());
+            const parts = finishedValue.split(',').map(s => s.trim()); // Changed 'cellValue' to 'finishedValue'
             dateToFormat = parts[parts.length - 1];
         }
         // Format date key (handle Timestamp or Date string)
@@ -280,14 +341,16 @@ function updateProgress() {
             if (dateToFormat instanceof Timestamp) dateObj = dateToFormat.toDate();
             else dateObj = new Date(dateToFormat);
 
-            if (!isNaN(dateObj)) {
+            if (!isNaN(dateObj.getTime())) { // Check validity
                 const year = dateObj.getFullYear();
                 const month = ("0" + (dateObj.getMonth() + 1)).slice(-2);
                 const day = dateObj.getDate().toString().padStart(2, '0');
                 dateKey = `${year}-${month}-${day}`;
                 finishedPerDay[dateKey] = (finishedPerDay[dateKey] || 0) + 1;
+            } else {
+                console.warn("Could not parse date for progress chart:", dateToFormat);
             }
-        } catch (e) { console.warn("Could not parse date for progress chart:", dateToFormat, e); }
+        } catch (e) { console.warn("Error parsing date for progress chart:", dateToFormat, e); }
       }
     });
 
@@ -299,7 +362,7 @@ function updateProgress() {
     let labels = Object.keys(finishedPerDay).sort();
     let data = labels.map(label => finishedPerDay[label]);
     if (labels.length === 0) {
-      labels = ["No Tasks Achieved"];
+      labels = ["No Tasks Achieved Yet"]; // More descriptive label
       data = [0];
     }
 
@@ -323,6 +386,7 @@ function updateProgress() {
       },
       options: {
         responsive: true,
+        maintainAspectRatio: false, // Allow chart to resize height/width independently
         plugins: {
           title: { display: true, text: 'Tasks Achieved Per Day' },
           legend: { display: false }
@@ -351,8 +415,15 @@ function openDoneModal(codeFull, itemId) {
   const currentItem = dashboardItems.find(item => item.id === itemId);
   const ratingSelect = document.getElementById('ratingSelect');
   if (currentItem && currentItem.Rating && ratingSelect) {
+      // Handle potential multiple ratings string - Use last one
       const ratingValue = typeof currentItem.Rating === 'string' ? currentItem.Rating.split(',').pop().trim() : currentItem.Rating;
-      ratingSelect.value = ratingValue || 'false';
+      // Ensure the value exists in the dropdown options
+      if ([...ratingSelect.options].map(o => o.value).includes(String(ratingValue))) {
+         ratingSelect.value = String(ratingValue);
+      } else {
+         console.warn(`Rating value '${ratingValue}' not found in dropdown options.`);
+         ratingSelect.value = 'false'; // Default if rating value not found
+      }
   } else if (ratingSelect) {
       ratingSelect.value = 'false'; // Default if no item or rating found
   }
@@ -392,7 +463,16 @@ function handleSubmitRating(event) {
     return;
   }
   const ratingSelect = document.getElementById('ratingSelect');
-  const ratingValue = ratingSelect.value;
+  let ratingValue = ratingSelect.value;
+
+  // Convert 'true'/'false' strings from dropdown to boolean if needed, or keep as string/number
+  // Or parse to number if your ratings are numeric
+  // Example: If you want numeric ratings 1-5, but dropdown has strings:
+  // if (!isNaN(parseInt(ratingValue))) {
+  //    ratingValue = parseInt(ratingValue);
+  // } else if (ratingValue === 'false') { // Handle 'false' explicitly if needed
+  //    ratingValue = null; // Or 0, or keep as 'false' string
+  // }
 
   // Simple overwrite approach for 'Rating'
   updateTask(currentItemId, { Rating: ratingValue });
@@ -404,6 +484,11 @@ async function pickRandomTask() {
   document.getElementById("randomTaskOutput").innerHTML = "Picking random task...";
 
   try {
+      if (!dashboardItems || dashboardItems.length === 0) {
+          document.getElementById("randomTaskOutput").innerHTML = "<strong>No tasks available to pick from!</strong>";
+          renderTable();
+          return;
+      }
     // Filter local cache for unfinished items
     const unfinishedItems = dashboardItems.filter(item => {
         let isUnfinished = true;
@@ -429,7 +514,7 @@ async function pickRandomTask() {
 
   } catch (error) {
     handleError("Error picking random task:", error);
-    document.getElementById("randomTaskOutput").innerHTML = `<span style="color:red;">Error: ${error.message}</span>`;
+    document.getElementById("randomTaskOutput").innerHTML = `<span style="color:red;">Error picking task. See console.</span>`;
     showingSingleRandomTask = false; // Ensure flag is reset on error
     renderTable(); // Show full table on error
   }
@@ -443,6 +528,13 @@ function displaySingleTask(itemId, updateOutputDiv = false) {
     tableBody.innerHTML = ''; // Clear table body
     header.innerHTML = ''; // Clear table header
     if (updateOutputDiv) outputDiv.innerHTML = ''; // Clear output div
+
+    if (!dashboardItems) { // Added check
+        handleError(`Error displaying single task: Dashboard items not loaded.`);
+        if (updateOutputDiv) outputDiv.innerHTML = `<span style="color:red;">Error displaying task details (data not loaded).</span>`;
+        showingSingleRandomTask = false;
+        return;
+    }
 
     const item = dashboardItems.find(i => i.id === itemId);
 
@@ -461,7 +553,7 @@ function displaySingleTask(itemId, updateOutputDiv = false) {
     let headerRow = document.createElement("tr");
     columns.forEach(colName => {
         let th = document.createElement("th");
-        th.textContent = col;
+        th.textContent = colName; // Corrected variable name
         headerRow.appendChild(th);
     });
     header.appendChild(headerRow);
@@ -478,7 +570,8 @@ function displaySingleTask(itemId, updateOutputDiv = false) {
             if (colName === 'finished' && cellValue && (typeof cellValue !== 'string' || cellValue.trim() !== '')) {
                 cellValue = formatDate(cellValue);
             }
-            if (cellValue.toString().trim() !== '') {
+            // Only display non-empty values for clarity
+            if (String(cellValue).trim() !== '') {
                 detailsHtml += `<span><strong>${colName}:</strong> ${cellValue}</span><br>`;
             }
         });
@@ -494,19 +587,42 @@ async function clearAllMarkings() {
     if (!confirm('Are you sure you want to clear the "finished" marking and "Rating" for ALL tasks? This cannot be undone!')) {
         return;
     }
+    console.log("Attempting to clear markings for all tasks...");
+
+    if (!dashboardItems || dashboardItems.length === 0) {
+        alert("No items found to clear.");
+        return;
+    }
 
     try {
-        // Use a batched write to perform multiple updates efficiently
-        const batch = writeBatch(db);
+        // Use batched writes for efficiency, processing in chunks if needed
+        const MAX_BATCH_SIZE = 500; // Firestore batch limit
+        let batch = writeBatch(db);
+        let count = 0;
 
-        dashboardItems.forEach(item => {
+        for (const item of dashboardItems) {
             const itemRef = doc(db, collectionName, item.id);
             batch.update(itemRef, { finished: null, Rating: null });
-        });
+            count++;
 
-        await batch.commit();
+            // Commit batch if it reaches max size and start a new one
+            if (count === MAX_BATCH_SIZE) {
+                console.log(`Committing batch of ${count} updates...`);
+                await batch.commit();
+                batch = writeBatch(db); // Start new batch
+                count = 0;
+            }
+        }
+
+        // Commit any remaining operations in the last batch
+        if (count > 0) {
+            console.log(`Committing final batch of ${count} updates...`);
+            await batch.commit();
+        }
+
         console.log('Successfully cleared "finished" and "Rating" for all documents.');
         alert('Successfully cleared markings for all tasks.');
+        // UI will update via onSnapshot
     } catch (error) {
         handleError('Error clearing all markings:', error);
         alert('Failed to clear markings. See console for details.');
@@ -534,44 +650,80 @@ function showProgress() {
 // --- Event Listeners Setup ---
 
 document.addEventListener('DOMContentLoaded', () => {
+  console.log("DOM fully loaded and parsed."); // Debug log
+
+  // Check if db is initialized (add small delay if needed)
+  if (!db) {
+      console.error("Firebase DB not initialized when DOMContentLoaded fired!");
+      handleError("Initialization Error", { message: "Firebase DB not ready."});
+      // You might retry initialization or show a permanent error here
+      return;
+  } else {
+       console.log("Firebase DB seems initialized.");
+  }
+
+
   // View Buttons
-  document.getElementById('dashboardBtn').addEventListener('click', showDashboard);
-  document.getElementById('progressBtn').addEventListener('click', showProgress);
+  const dashboardBtn = document.getElementById('dashboardBtn');
+  const progressBtn = document.getElementById('progressBtn');
+  if (dashboardBtn) dashboardBtn.addEventListener('click', showDashboard);
+  if (progressBtn) progressBtn.addEventListener('click', showProgress);
 
   // Action Buttons
-  document.getElementById('randomTask').addEventListener('click', pickRandomTask);
-  document.getElementById('filterUnfinished').addEventListener('click', () => {
-    filterUnfinishedActive = !filterUnfinishedActive;
-    document.getElementById('filterUnfinished').textContent = filterUnfinishedActive ? "Show All Tasks" : "Show Unfinished Only";
-    renderTable(); // Re-render with current search, resets single view
-  });
+  const randomTaskBtn = document.getElementById('randomTask');
+  const filterUnfinishedBtn = document.getElementById('filterUnfinished');
+  if (randomTaskBtn) randomTaskBtn.addEventListener('click', pickRandomTask);
+  if (filterUnfinishedBtn) {
+    filterUnfinishedBtn.addEventListener('click', () => {
+      filterUnfinishedActive = !filterUnfinishedActive;
+      filterUnfinishedBtn.textContent = filterUnfinishedActive ? "Show All Tasks" : "Show Unfinished Only";
+      showingSingleRandomTask = false; // Filtering should show the table view
+      renderTable(); // Re-render with current search/filter
+    });
+  }
 
   // Search Input
-  document.getElementById('search').addEventListener('input', (event) => {
-    currentSearchTerm = event.target.value; // Store search term
-    renderTable(); // Re-render with current search, resets single view
-  });
+  const searchInput = document.getElementById('search');
+  if (searchInput) {
+    searchInput.addEventListener('input', (event) => {
+      currentSearchTerm = event.target.value; // Store search term
+      showingSingleRandomTask = false; // Searching should show the table view
+      renderTable(); // Re-render with current search/filter
+    });
+  }
 
   // Done Modal Buttons
-  document.getElementById('markDoneButton').addEventListener('click', handleMarkTaskAsDone);
+  const markDoneBtn = document.getElementById('markDoneButton');
+  const closeModalBtn = document.getElementById('closeModal');
+  if (markDoneBtn) markDoneBtn.addEventListener('click', handleMarkTaskAsDone);
+  if (closeModalBtn) closeModalBtn.addEventListener('click', closeDoneModal);
 
-  // Rating Modal Buttons
-  document.getElementById('ratingForm').addEventListener('submit', (event) => {
-    event.preventDefault();
-    handleSubmitRating(event);
-  });
-  document.getElementById('closeModal').addEventListener('click', closeDoneModal);
+
+  // Rating Modal Buttons (Assuming rating elements are inside the 'doneModal')
+  const ratingForm = document.getElementById('ratingForm');
+  if (ratingForm) {
+    ratingForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      handleSubmitRating(event);
+    });
+  }
+
 
   // Clear DB Button
-  document.getElementById('clear-db').addEventListener('click', clearAllMarkings);
+  const clearDbBtn = document.getElementById('clear-db');
+  if (clearDbBtn) clearDbBtn.addEventListener('click', clearAllMarkings);
 
   // Initial setup
   showDashboard(); // Show dashboard by default
   listenForDataUpdates(); // Start listening for Firestore updates
-    document.addEventListener('keydown', (event) => {
+
+  // Global listener for Escape key to close modals
+  document.addEventListener('keydown', (event) => {
     if (event.key === "Escape") {
       closeDoneModal();
-      closeRatingModal();
+      closeRatingModal(); // Close this too if it's separate
     }
   });
+
+   console.log("Event listeners attached."); // Debug log
 });
