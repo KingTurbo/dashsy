@@ -138,11 +138,6 @@ body {
 
 
 
-#progressChart {
-  /* Canvas itself should usually fill its container */
-  /* Chart.js will handle the internal sizing */
-}
-
 /* Style for the gamification area if you add it */
 .gamification {
    margin-top: 20px;
