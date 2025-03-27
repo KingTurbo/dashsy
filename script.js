@@ -450,38 +450,130 @@ function closeRatingModal() {
   // Avoid clearing currentItemId here if doneModal might still be open
 }
 
+
+// --- Firestore Interaction Functions --- (Add this new function here)
+
+/**
+ * Finds all documents with a specific codeFull value and updates them using a batch write.
+ * @param {string} codeFullValue The codeFull value to query for.
+ * @param {object} dataToUpdate An object containing the fields and values to update.
+ */
+
+
+async function updateItemGroupByCodeFull(codeFullValue, dataToUpdate) {
+  if (!codeFullValue) {
+    handleError("Group update failed: No codeFull value provided.");
+    return;
+  }
+  console.log(`Attempting group update for codeFull '${codeFullValue}' with data:`, dataToUpdate);
+
+  // 1. Query for all documents with the matching codeFull
+  const q = query(itemsCollectionRef, where("codeFull", "==", codeFullValue));
+
+  try {
+    const querySnapshot = await getDocs(q);
+
+    if (querySnapshot.empty) {
+      console.warn(`No documents found with codeFull '${codeFullValue}' to update.`);
+      // Still close modals maybe? Or inform user? For now, just log.
+      closeDoneModal(); // Close modal even if nothing was found matching codeFull
+      closeRatingModal();
+      return;
+    }
+
+    // 2. Create a batch write
+    const batch = writeBatch(db);
+    let updatedCount = 0;
+
+    // 3. Add update operations to the batch for each matching document
+    querySnapshot.forEach((doc) => {
+      console.log(`Adding update for doc ${doc.id} to batch.`);
+      batch.update(doc.ref, dataToUpdate);
+      updatedCount++;
+    });
+
+    // 4. Commit the batch
+    await batch.commit();
+    console.log(`Successfully updated ${updatedCount} documents with codeFull '${codeFullValue}'.`);
+
+    // UI updates will happen via the onSnapshot listener.
+    // Close modals after successful batch commit.
+    closeDoneModal();
+    closeRatingModal();
+
+  } catch (error) {
+    console.error(`Firestore group update failed for codeFull '${codeFullValue}':`, error);
+    console.error("Error Code:", error.code);
+    console.error("Error Message:", error.message);
+    handleError(`Error updating group for codeFull '${codeFullValue}' (Code: ${error.code})`, error);
+  }
+}
+
+// ... (keep existing functions like listenForDataUpdates, updateTask, addTask, deleteTask)
+
+
+// --- Action Handlers ---
 // --- Action Handlers ---
 
-function handleMarkTaskAsDone() {
+async function handleMarkTaskAsDone() { // Make async if calling an async function
   if (!currentItemId) {
     handleError("Cannot mark task done: No item selected.");
     return;
   }
+
+  // Find the clicked item in the local cache to get its codeFull value
+  const currentItem = dashboardItems.find(item => item.id === currentItemId);
+
+  if (!currentItem || !currentItem.codeFull) {
+      handleError("Cannot mark task done: Could not find item or codeFull value.", { currentItemId });
+      closeDoneModal(); // Close modal even on error finding item
+      return;
+  }
+
+  const codeFullValue = currentItem.codeFull;
   const now = Timestamp.now(); // Use Firestore Timestamp
-  // Simple overwrite approach for 'finished' timestamp
-  updateTask(currentItemId, { finished: now });
+
+  console.log(`Marking group with codeFull '${codeFullValue}' as done.`);
+  // Call the group update function instead of the single updateTask
+  await updateItemGroupByCodeFull(codeFullValue, { finished: now });
+
+  // Note: Modal closing is now handled inside updateItemGroupByCodeFull on success/error
+  // We no longer call updateTask here.
 }
-function handleSubmitRating(event) {
+
+
+async function handleSubmitRating(event) { // Make async
   event.preventDefault(); // Prevent form submission
   if (!currentItemId) {
     handleError("Cannot submit rating: No item selected.");
     return;
   }
+
+  // Find the clicked item in the local cache to get its codeFull value
+  const currentItem = dashboardItems.find(item => item.id === currentItemId);
+
+  if (!currentItem || !currentItem.codeFull) {
+      handleError("Cannot submit rating: Could not find item or codeFull value.", { currentItemId });
+      closeDoneModal(); // Close modal even on error finding item
+      return;
+  }
+
+  const codeFullValue = currentItem.codeFull;
   const ratingSelect = document.getElementById('ratingSelect');
   let ratingValue = ratingSelect.value; // This is currently a string ('easy', 'medium', etc.)
 
-  console.log(`Preparing to update rating for ${currentItemId} with value:`, ratingValue); // Add log before calling updateTask
+  console.log(`Preparing to update rating for group with codeFull '${codeFullValue}' with value:`, ratingValue);
 
-  // If Firestore/Rules expect a number, you would convert here:
-  // if (!isNaN(parseInt(ratingValue))) {
-  //     ratingValue = parseInt(ratingValue);
-  // } else {
-  //     // Handle non-numeric ratings appropriately, maybe map 'easy' to 1, etc.
-  //     // Or maybe keep as string if that's intended.
-  // }
+  // Call the group update function instead of the single updateTask
+  await updateItemGroupByCodeFull(codeFullValue, { Rating: ratingValue }); // Check if frontend expects 'rating' or 'Rating' field
 
-  updateTask(currentItemId, { Rating: ratingValue });
+  // Note: Modal closing is now handled inside updateItemGroupByCodeFull on success/error
+  // We no longer call updateTask here.
 }
+
+// ... (keep other functions like pickRandomTask, displayTasks, etc.)
+
+
 
 // Pick and display a random unfinished task
 async function pickRandomTask() {
@@ -627,49 +719,24 @@ function displaySingleTask(itemId, updateOutputDiv = false) {
 
 // Clear 'finished' and 'Rating' fields for all documents
 async function clearAllMarkings() {
-    if (!confirm('Are you sure you want to clear the "finished" marking and "Rating" for ALL tasks? This cannot be undone!')) {
-        return;
-    }
-    console.log("Attempting to clear markings for all tasks...");
+  // ... (confirmation dialog) ...
+  // ... (check if dashboardItems exists) ...
 
-    if (!dashboardItems || dashboardItems.length === 0) {
-        alert("No items found to clear.");
-        return;
-    }
+  try {
+      // ... (batch initialization) ...
 
-    try {
-        // Use batched writes for efficiency, processing in chunks if needed
-        const MAX_BATCH_SIZE = 500; // Firestore batch limit
-        let batch = writeBatch(db);
-        let count = 0;
+      for (const item of dashboardItems) {
+          const itemRef = doc(db, collectionName, item.id);
+          // *** Ensure field names match exactly what you use elsewhere ('rating' or 'Rating') ***
+          batch.update(itemRef, { finished: null, Rating: null }); // Or rating: null
+          // ... (batch commit logic) ...
+      }
 
-        for (const item of dashboardItems) {
-            const itemRef = doc(db, collectionName, item.id);
-            batch.update(itemRef, { finished: null, Rating: null });
-            count++;
-
-            // Commit batch if it reaches max size and start a new one
-            if (count === MAX_BATCH_SIZE) {
-                console.log(`Committing batch of ${count} updates...`);
-                await batch.commit();
-                batch = writeBatch(db); // Start new batch
-                count = 0;
-            }
-        }
-
-        // Commit any remaining operations in the last batch
-        if (count > 0) {
-            console.log(`Committing final batch of ${count} updates...`);
-            await batch.commit();
-        }
-
-        console.log('Successfully cleared "finished" and "Rating" for all documents.');
-        alert('Successfully cleared markings for all tasks.');
-        // UI will update via onSnapshot
-    } catch (error) {
-        handleError('Error clearing all markings:', error);
-        alert('Failed to clear markings. See console for details.');
-    }
+      // ... (final batch commit logic) ...
+      // ... (success messages) ...
+  } catch (error) {
+      // ... (error handling) ...
+  }
 }
 
 // --- View Switching ---
