@@ -366,10 +366,16 @@ function updateProgress() {
 
     // Prepare data for chart
     let labels = Object.keys(finishedPerDay).sort();
-    let data = labels.map(label => finishedPerDay[label]);
+    let cumulativeData = [];
+    let cumulativeCount = 0;
+    labels.forEach(label => {
+      cumulativeCount += finishedPerDay[label];
+      cumulativeData.push(cumulativeCount);
+    });
+
     if (labels.length === 0) {
       labels = ["No Tasks Achieved Yet"]; // More descriptive label
-      data = [0];
+      cumulativeData = [0];
     }
 
     // Draw chart
@@ -382,8 +388,8 @@ function updateProgress() {
       data: {
         labels: labels,
         datasets: [{
-          label: 'Tasks Achieved',
-          data: data,
+          label: 'Tasks Achieved (Cumulative)',
+          data: cumulativeData,
           borderColor: '#4CAF50',
           backgroundColor: 'rgba(76, 175, 80, 0.2)', // Optional fill
           fill: true,
@@ -394,7 +400,7 @@ function updateProgress() {
         responsive: true,
         maintainAspectRatio: false, // Allow chart to resize height/width independently
         plugins: {
-          title: { display: true, text: 'Tasks Achieved Per Day' },
+          title: { display: true, text: 'Cumulative Tasks Achieved Over Time' },
           legend: { display: false }
         },
         scales: {
@@ -407,6 +413,27 @@ function updateProgress() {
         }
       }
     });
+
+    // Gamification elements
+    const pointsPerTask = 10;
+    const currentPoints = totalFinishedCount * pointsPerTask;
+    const levelThresholds = [0, 50, 100, 200, 500]; // Example level thresholds
+    let currentLevel = 0;
+    while (currentLevel < levelThresholds.length - 1 && currentPoints >= levelThresholds[currentLevel + 1]) {
+      currentLevel++;
+    }
+    const pointsToNextLevel = currentLevel < levelThresholds.length - 1 ? levelThresholds[currentLevel + 1] - currentPoints : 0;
+
+    let progressHtml = `
+      <div class="gamification">
+        <h4>Your Progress</h4>
+        <p>Points: ${currentPoints}</p>
+        <p>Level: ${currentLevel + 1} (Tasks: ${totalFinishedCount})</p>
+        ${currentLevel < levelThresholds.length - 1 ? `<p>Tasks to next level: ${pointsToNextLevel / pointsPerTask}</p>` : `<p>You have reached the maximum level!</p>`}
+      </div>
+    `;
+    document.getElementById("progressAnalysis").innerHTML = progressHtml;
+
   } catch (error) {
     handleError("Error updating progress analysis:", error);
   }
