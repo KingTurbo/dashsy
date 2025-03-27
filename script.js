@@ -99,7 +99,7 @@ async function updateTask(itemId, dataToUpdate) {
   }
 }
 
-// Add a new task (Example function - adapt fields as needed)
+// Add a new task (Example function)
 async function addTask(newItemData) {
   console.log("Adding new item:", newItemData);
   // Add default fields if necessary, e.g., finished: null, Rating: null
@@ -260,7 +260,7 @@ function updateProgress() {
         let dateToFormat = finishedValue;
         // Handle potential multiple timestamps string
         if (typeof finishedValue === 'string' && finishedValue.includes(',')) {
-            const parts = finishedValue.split(',').map(s => s.trim());
+            const parts = cellValue.split(',').map(s => s.trim());
             dateToFormat = parts[parts.length - 1];
         }
         // Format date key (handle Timestamp or Date string)
@@ -440,7 +440,7 @@ function displaySingleTask(itemId, updateOutputDiv = false) {
         handleError(`Error displaying single task: Item ID ${itemId} not found in local cache.`);
         tableBody.innerHTML = '<tr><td colspan="100%">Error loading task details.</td></tr>';
         if (updateOutputDiv) outputDiv.innerHTML = `<span style="color:red;">Error displaying task details.</span>`;
-        showingSingleRandomTask = false; // Reset flag if item not found
+        showingSingleRandomTask = false; // Ensure flag is reset on error
         return;
     }
 
@@ -449,7 +449,7 @@ function displaySingleTask(itemId, updateOutputDiv = false) {
 
     // Generate header
     let headerRow = document.createElement("tr");
-    columns.forEach(col => {
+    columns.forEach(colName => {
         let th = document.createElement("th");
         th.textContent = col;
         headerRow.appendChild(th);
