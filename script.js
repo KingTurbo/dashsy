@@ -212,7 +212,7 @@ function renderTable() {
 
   // Determine columns from the first item (assuming consistent structure)
   // Exclude the 'id' field we added from the header/display rows directly
-  const columns = Object.keys(dashboardItems[0]).filter(key => key !== 'id');
+  const columns = ["insertItem", "name", "dateRelease", "codeSection", "codeFull", "finished", "Rating"];
 
   // Generate table header
   let headerRow = document.createElement("tr");
