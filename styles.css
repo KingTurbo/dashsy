@@ -1,0 +1,118 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f4f4f4;
+  }
+  
+  header {
+    background-color: #333;
+    color: #fff;
+    padding: 10px;
+    text-align: center;
+  }
+  
+  #topMenu {
+    margin-bottom: 10px;
+  }
+  
+  #topMenu input[type="text"], #topMenu button {
+    padding: 8px;
+    margin: 2px;
+    border-radius: 4px;
+    border: 1px solid #ddd;
+  }
+  
+  #topMenu button {
+    cursor: pointer;
+    background-color: #5cb85c;
+    color: white;
+    border: none;
+  }
+  
+  #topMenu button:hover {
+    background-color: #4cae4c;
+  }
+  
+  main {
+    padding: 20px;
+  }
+  
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  
+  table, th, td {
+    border: 1px solid #ddd;
+  }
+  
+  th, td {
+    text-align: left;
+    padding: 8px;
+  }
+  
+  th {
+    background-color: #f2f2f2;
+  }
+  
+  tr:nth-child(even) {
+    background-color: #f2f2f2;
+  }
+  
+  tr.done {
+    background-color: #dff0d8;
+  }
+  
+  /* Style for the modal */
+  .modal {
+    display: none; /* Hidden by default */
+    position: fixed; /* Stay in place */
+    z-index: 1000; /* Higher z-index to overlay table */
+    left: 0;
+    top: 0;
+    width: 100%; /* Full width */
+    height: 100%; /* Full height */
+    overflow: auto; /* Enable scroll if needed */
+    background-color: rgba(0,0,0,0.4); /* Black w/ opacity */
+    backdrop-filter: blur(5px); /* Blur background */
+  }
+  
+  /* Modal Content */
+  .modal-content {
+    background-color: #fefefe;
+    margin: 10% auto; /* Center vertically and horizontally */
+    padding: 20px;
+    border: 1px solid #888;
+    width: 80%;
+    border-radius: 10px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    position: relative;
+  }
+  
+  /* Style for the random task output area */
+  #randomTaskOutput {
+    background-color: #e9ecef;
+    border: 1px solid #ced4da;
+    padding: 10px;
+    margin-bottom: 10px;
+    border-radius: 4px;
+    text-align: center;
+  }
+
+  /* Style for task details within randomTaskOutput */
+  #randomTaskOutput .task-details {
+    text-align: left;
+    display: inline-block; /* Allows container to wrap content width */
+    margin: 0 auto; /* Center the block horizontally */
+  }
+
+  #randomTaskOutput .task-details span {
+    display: block; /* Each span on a new line */
+    margin-bottom: 5px; /* Space between lines */
+  }
+
+  #randomTaskOutput strong {
+    font-weight: bold;
+    margin-right: 5px;
+  }

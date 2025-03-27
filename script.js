@@ -181,6 +181,7 @@ function updateProgress() {
   try {
     if (typeof Chart === 'undefined') {
       console.error('Chart.js library is not loaded');
+      return;
     }
     let query = 'SELECT * FROM "' + currentTableName + '"';
     const stmt = globalDB.exec(query);
@@ -199,7 +200,7 @@ function updateProgress() {
         const month = ("0" + (finishedDate.getMonth()+1)).slice(-2);
         const day = ("0" + finishedDate.getDate()).slice(-2);
         const dateKey = `${year}-${month}-${day}`;
-        finishedPerDay[dateKey] = (finishedPerDay[key] || 0) + 1;
+        finishedPerDay[dateKey] = (finishedPerDay[dateKey] || 0) + 1;
       }
     });
 
@@ -217,7 +218,7 @@ function updateProgress() {
       }
     });
     const totalTasks = uniqueTasks.size;
-    let unfinishedTasksCount = totalTasks - finishedTasks.size;
+    const unfinishedTasksCount = totalTasks - finishedTasks.size;
     document.getElementById("unfinishedCount").textContent = "Unfinished tasks: " + unfinishedTasksCount + " / " + totalTasks;
 
     // Prepare data for chart: sort dates ascending, with fallback if no finished tasks are found
@@ -304,7 +305,7 @@ function markTaskAsDone(codeFull) {
   try {
     if (!globalDB || !currentTableName) return;
     const now = new Date().toISOString();
-    // Retrieve existingFinished value
+    // Retrieve existing finished value
     const result = globalDB.exec(`SELECT finished FROM "${currentTableName}" WHERE "code_full" = '${codeFull}' LIMIT 1`);
     let existingFinished = "";
     if (result.length && result[0].values.length) {
@@ -340,7 +341,8 @@ function submitRating(ratingValue) {
       return;
     }
     if (!globalDB || !currentTableName || !currentGroupCode) return;
-    // Use string interpolation to fetch existing rating since SQL.js exec(`SELECT Rating FROM "${currentTableName}" WHERE "code_full" = '${currentGroupCode}' LIMIT 1`);
+    // Use string interpolation to fetch existing rating since SQL.js exec() doesn't support parameters
+    const result = globalDB.exec(`SELECT Rating FROM "${currentTableName}" WHERE "code_full" = '${currentGroupCode}' LIMIT 1`);
     let existingRating = "";
     if (result.length && result[0].values.length) {
       existingRating = result[0].values[0][0] || "";
@@ -367,7 +369,7 @@ function submitRating(ratingValue) {
     } else {
       console.warn("ratingModal element not found, skipping closeRatingModal");
     }
-    // Refresh view - if singleTask, refresh its display, else refresh table
+    // Refresh view - if single task, refresh its display, else refresh table
     if (showingSingleRandomTask) {
       displaySingleTask(currentGroupCode, true);
     } else {
@@ -430,6 +432,194 @@ async function persistDatabase() {
   }
 }
 
+// Function to write the updated database to the local file "data/data_bifie.db"
+function writeDatabaseFile(dbBase64) {
+  // Using the write_to_file tool in our context, we can write the complete content.
+  // This function will be called from persistDatabase(), updating the database file.
+  // Since the write_to_file tool creates directories as needed, this will overwrite the file.
+  // The exported database is stored in base64, and initDatabase() will convert from base64 to Uint8Array.
+  // The local file now will contain the base64 string.
+  // In a real-world scenario, you might need to convert back to binary.
+  // For our client-side SQL.js environment, we are using base64 consistently.
+  writeContentToFile("data/data_bifie.db", dbBase64);
+}
+
+// Helper function to interface with the write_to_file tool (simulated here)
+function writeContentToFile(path, content) {
+  // This is a placeholder function. In our environment, you would use the write_to_file tool.
+  // For example, you might call:
+  // <write_to_file>
+  // <path>data/data_bifie.db</path>
+  // <content>[dbBase64]</content>
+  // </write_to_file>
+  // Here, we simply log the intended action.
+  console.log("Writing updated database to file:", path);
+}
+
+// Pick and display a random unfinished task
+function pickRandomTask() {
+  try {
+    if (!globalDB || !currentTableName) throw new Error("Database not ready");
+
+    const stmt = globalDB.exec(`SELECT * FROM "${currentTableName}"`);
+    if (!stmt.length) throw new Error("No tasks found");
+
+    const columns = stmt[0].columns;
+    const rows = stmt[0].values;
+    const finishedIndex = columns.indexOf("finished");
+    const codeFullIndex = columns.indexOf("code_full");
+
+    // Find unique unfinished code_full values
+    const unfinishedCodeFulls = Array.from(new Set(
+      rows.filter(row => !(row[finishedIndex] && row[finishedIndex].toString().trim()))
+          .map(row => row[codeFullIndex])
+          .filter(Boolean) // Ensure code_full is not null/empty
+    ));
+
+    if (unfinishedCodeFulls.length === 0) {
+      document.getElementById("randomTaskOutput").innerHTML = "<strong>All tasks are marked as done!</strong>";
+      loadData(); // Show all (likely done) tasks
+      return;
+    }
+
+    // Pick random code_full
+    const randomCodeFull = unfinishedCodeFulls[Math.floor(Math.random() * unfinishedCodeFulls.length)];
+    console.log("Randomly selected code_full:", randomCodeFull);
+
+    // Display only this task in the table and its details above
+    displaySingleTask(randomCodeFull, true); // true to update the output div as well
+
+    // Update state
+    showingSingleRandomTask = true;
+    document.getElementById('search').value = ''; // Clear search bar
+
+  } catch (error) {
+    handleError("Error picking random task:", error);
+    document.getElementById("randomTaskOutput").innerHTML = `<span style="color:red;">Error: ${error.message}</span>`;
+  }
+}
+
+// Display details and table rows for a single code_full
+function displaySingleTask(codeFull, updateOutputDiv = false) {
+    try {
+        if (!globalDB || !currentTableName) return;
+
+        // Fetch all rows for the specific code_full
+        const stmt = globalDB.prepare(`SELECT * FROM "${currentTableName}" WHERE "code_full" = ?`);
+        stmt.bind([codeFull]);
+
+        const tableBody = document.getElementById('dashboard-body');
+        const header = document.getElementById("dashboard-header");
+        tableBody.innerHTML = ''; // Clear table body
+        header.innerHTML = ''; // Clear table header
+
+        let columns = null;
+        let firstRowData = null; // To store data for the output div
+
+        // Process results
+        while (stmt.step()) {
+            const rowData = stmt.get(); // Get row data as array
+            if (!columns) {
+                columns = stmt.getColumnNames(); // Get column names
+
+                // Ensure header is generated (only once)
+                let headerRow = document.createElement("tr");
+                columns.forEach(col => {
+                    let th = document.createElement("th");
+                    th.textContent = col;
+                    headerRow.appendChild(th);
+                });
+                header.appendChild(headerRow);
+                 firstRowData = rowData; // Store first row data for display above table
+            }
+            // Create and append table row
+            const tr = createTableRow(rowData, columns);
+            tableBody.appendChild(tr);
+        }
+        stmt.free(); // Release statement
+
+        // Update the randomTaskOutput div if requested and data exists
+        if (updateOutputDiv && firstRowData && columns) {
+            let detailsHtml = `<strong>Random Task Selected:</strong><br><div class="task-details">`;
+            columns.forEach((colName, index) => {
+                // Only display non-empty fields
+                let cellValue = firstRowData[index] ?? '';
+                 // Format date if it's the 'finished' column and not empty
+                 if (colName === 'finished' && cellValue.toString().trim() !== '') {
+                    cellValue = formatDate(cellValue);
+                 }
+                 if(cellValue.toString().trim() !== '') { // Only show fields with content
+                    detailsHtml += `<span><strong>${colName}:</strong> ${cellValue}</span><br>`;
+                 }
+            });
+            detailsHtml += `</div>`;
+            document.getElementById("randomTaskOutput").innerHTML = detailsHtml;
+        } else if (updateOutputDiv) {
+             document.getElementById("randomTaskOutput").innerHTML = `Details for ${codeFull} could not be retrieved.`;
+        }
+
+    } catch (error) {
+        handleError('Error displaying single task:', error);
+        tableBody.innerHTML = '<tr><td colspan="100%">Error loading task details.</td></tr>'; // Show error in table
+        header.innerHTML = ''; // Clear header on error
+         if (updateOutputDiv) {
+            document.getElementById("randomTaskOutput").innerHTML = `<span style="color:red;">Error displaying task details: ${error.message}</span>`;
+         }
+    }
+}
+
+
+// Generic error handler
+function handleError(context, error) {
+  console.error(context, error);
+  const errorDiv = document.getElementById('error');
+  if (errorDiv) {
+    errorDiv.textContent = `${context} ${error.message}`;
+  }
+}
+
+// Event Listeners Setup
+document.addEventListener('DOMContentLoaded', () => {
+  // View Buttons
+  document.getElementById('dashboardBtn').addEventListener('click', showDashboard);
+  document.getElementById('progressBtn').addEventListener('click', showProgress);
+
+  // Action Buttons
+  document.getElementById('randomTask').addEventListener('click', pickRandomTask);
+  document.getElementById('filterUnfinished').addEventListener('click', () => {
+    filterUnfinishedActive = !filterUnfinishedActive;
+    document.getElementById('filterUnfinished').textContent = filterUnfinishedActive ? "Show All Tasks" : "Show Unfinished Only";
+    loadData(document.getElementById('search').value); // Reload with current search, resets single view
+  });
+
+  // Search Input
+  document.getElementById('search').addEventListener('input', (event) => {
+    loadData(event.target.value); // Search resets single view
+  });
+
+  // Done Modal Buttons
+  document.getElementById('markDoneButton').addEventListener('click', () => markTaskAsDone(currentGroupCode));
+
+  // Rating Modal Buttons
+  document.getElementById('ratingForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    submitRating(document.getElementById('ratingSelect').value);
+  });
+  document.getElementById('closeModal').addEventListener('click', closeDoneModal);
+  
+  // Download DB Button
+  document.getElementById('downloadDbBtn').addEventListener('click', downloadDatabase);
+
+  // Initial setup
+  showDashboard(); // Show dashboard by default
+  initDatabase();  // Load database
+  document.addEventListener('keydown', (event) => {
+    if (event.key === "Escape") {
+      closeDoneModal();
+      closeRatingModal();
+  }
+});
+
 // Function to trigger database download
 function downloadDatabase() {
   if (!globalDB) {
@@ -452,4 +642,31 @@ function downloadDatabase() {
     handleError("Error downloading database:", error);
   }
 }
+});
 
+// Auto-refresh (polling) - only when dashboard is visible and not showing single task
+setInterval(() => {
+  const dashboardVisible = document.getElementById('dashboardView').style.display !== 'none';
+  if (dashboardVisible && !showingSingleRandomTask) {
+    console.log("Auto-refreshing dashboard...");
+    loadData(document.getElementById('search').value); // Refresh with current search term
+  }
+}, 15000);
+
+document.getElementById('clear-db').addEventListener('click', function() {
+  if (confirm('Are you sure you want to clear the done marking and rating?')) {
+    if (!globalDB || !currentTableName) {
+      alert("Database not loaded.");
+      return;
+    }
+    // Clear the markings directly in the in-memory database
+    globalDB.run(`UPDATE "${currentTableName}" SET finished = NULL, Rating = NULL`);
+    console.log("Clear query executed for table " + currentTableName);
+    // Persist the updated database to localStorage 
+    persistDatabase();
+    console.log("Database persisted after clear update.");
+    // Reload the dashboard from the current in-memory database (which reflects cleared state)
+    loadData(document.getElementById('search').value);
+    alert("Database markings cleared successfully.");
+  }
+});
