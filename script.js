@@ -1,32 +1,47 @@
-/* Helper functions for persistence */
-function uint8ArrayToBase64(u8Arr) {
-  let CHUNK_SIZE = 0x8000;
-  let index = 0;
-  let length = u8Arr.length;
-  let result = '';
-  let slice;
-  while (index < length) {
-    slice = u8Arr.subarray(index, Math.min(index + CHUNK_SIZE, length));
-    result += String.fromCharCode.apply(null, slice);
-    index += CHUNK_SIZE;
-  }
-  return btoa(result);
-}
+// Import Firestore functions (assuming v9 modular SDK loaded in HTML)
+// Access the initialized db instance from the window object
+const db = window.firebaseDB;
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  onSnapshot,
+  doc,
+  updateDoc,
+  addDoc,
+  deleteDoc,
+  Timestamp, // Import Timestamp for date fields
+  writeBatch // Import writeBatch for bulk operations like clear-db
+} from "https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js";
 
-function base64ToUint8Array(base64) {
-  let binary_string = atob(base64);
-  let len = binary_string.length;
-  let bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binary_string.charCodeAt(i);
-  }
-  return bytes;
-}
+// --- Global Variables ---
+const collectionName = "dashboard_items"; // Your Firestore collection name
+const itemsCollectionRef = collection(db, collectionName);
+let dashboardItems = []; // Local cache of items from Firestore
+let currentItemId = null; // Store the Firestore ID of the item being interacted with
+let filterUnfinishedActive = false;
+let showingSingleRandomTask = false; // Flag for single task display mode
+let currentSearchTerm = ""; // Store current search term
+let unsubscribeSnapshot = null; // To detach the listener later if needed
 
-/* Format ISO date string into human-readable format: YYYY-MM-DD HH:mm */
-function formatDate(dateStr) {
-  const date = new Date(dateStr);
-  if (isNaN(date)) return dateStr;
+// --- Helper Functions ---
+
+/* Format Firestore Timestamp or ISO date string into human-readable format: YYYY-MM-DD HH:mm */
+function formatDate(dateInput) {
+  let date;
+  if (dateInput instanceof Timestamp) {
+    date = dateInput.toDate(); // Convert Firestore Timestamp to JS Date
+  } else if (typeof dateInput === 'string') {
+    date = new Date(dateInput);
+  } else if (dateInput instanceof Date) {
+    date = dateInput;
+  } else {
+    return dateInput; // Return original if not a recognizable date format
+  }
+
+  if (isNaN(date)) return dateInput; // Return original if parsing failed
+
   const year = date.getFullYear();
   const month = ("0" + (date.getMonth() + 1)).slice(-2);
   const day = ("0" + date.getDate()).slice(-2);
@@ -35,193 +50,242 @@ function formatDate(dateStr) {
   return `${year}-${month}-${day} ${hour}:${minute}`;
 }
 
-// Global variables
-let globalDB = null;
-let currentTableName = null;
-let currentGroupCode = null;
-let filterUnfinishedActive = false;
-let showingSingleRandomTask = false; // Flag for single task display mode
+// --- Firestore Interaction Functions ---
 
-async function initDatabase() {
-  try {
-    const SQL = await initSqlJs({
-      locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
+// Listen for real-time updates and load initial data
+function listenForDataUpdates() {
+  if (unsubscribeSnapshot) {
+    unsubscribeSnapshot(); // Detach previous listener if exists
+  }
+  console.log("Setting up Firestore listener...");
+  const q = query(itemsCollectionRef); // Simple query for all documents
+
+  unsubscribeSnapshot = onSnapshot(q, (querySnapshot) => {
+    console.log("Received Firestore snapshot update.");
+    const newItems = []; // Build new list before replacing
+    querySnapshot.forEach((doc) => {
+      newItems.push({ id: doc.id, ...doc.data() });
     });
-    const savedDB = localStorage.getItem('data_bifie_db');
-    if (savedDB) {
-      globalDB = new SQL.Database(base64ToUint8Array(savedDB));
-    } else {
-    const response = await fetch('data/data_bifie.db?cache=' + new Date().getTime());
-    const clonedResponse = response.clone();
-    const text = await clonedResponse.text();
-    if (/^[A-Za-z0-9+/]+={0,2}$/.test(text.trim()) && text.trim().length % 4 === 0) {
-      globalDB = new SQL.Database(base64ToUint8Array(text.trim()));
-    } else {
-      const uInt8Buffer = new Uint8Array(await response.arrayBuffer());
-      globalDB = new SQL.Database(uInt8Buffer);
+    dashboardItems = newItems; // Update local cache
+    console.log("Total items fetched:", dashboardItems.length);
+    // Render the table with the updated data, applying current filters/search
+    renderTable();
+    // Update progress chart if progress view is active
+    if (document.getElementById('progressView').style.display !== 'none') {
+      updateProgress();
     }
-      persistDatabase();
-    }
-    const tablesResult = globalDB.exec("SELECT name FROM sqlite_master WHERE type='table'");
-    if (!tablesResult.length || !tablesResult[0].values.length) throw new Error('No tables found');
-    currentTableName = tablesResult[0].values[0][0];
-    console.log("Current table:", currentTableName);
-    loadData(); // Initial data load
+  }, (error) => {
+    handleError("Error listening to Firestore:", error);
+  });
+}
+
+// Update a task (mark as done, change rating, etc.)
+async function updateTask(itemId, dataToUpdate) {
+  if (!itemId) {
+    handleError("Update failed: No item ID provided.");
+    return;
+  }
+  console.log(`Updating item ${itemId} with:`, dataToUpdate);
+  const itemDocRef = doc(db, collectionName, itemId);
+  try {
+    await updateDoc(itemDocRef, dataToUpdate);
+    console.log("Item updated successfully in Firestore.");
+    // UI will update automatically via onSnapshot listener
+    // Close modals if the update originated from one
+    closeDoneModal();
+    closeRatingModal(); // Close rating modal if it was used
   } catch (error) {
-    handleError('Error initializing database:', error);
+    handleError(`Error updating item ${itemId}:`, error);
   }
 }
 
-// Load and display data in the table
-function loadData(searchTerm = "") {
-  // If not forced by random pick, reset single task view
-  if (!showingSingleRandomTask) {
-        document.getElementById("randomTaskOutput").innerHTML = ""; // Clear random task display area
-  }
-  // Resetting flag if user initiates a normal load/search
-  showingSingleRandomTask = false;
-
-
+// Add a new task (Example function - adapt fields as needed)
+async function addTask(newItemData) {
+  console.log("Adding new item:", newItemData);
+  // Add default fields if necessary, e.g., finished: null, Rating: null
+  const dataToAdd = {
+      finished: null,
+      Rating: null,
+      ...newItemData // User provided data overrides defaults
+  };
   try {
-    if (!globalDB || !currentTableName) return; // DB not ready
-
-    let query = `SELECT * FROM "${currentTableName}"`;
-    const stmt = globalDB.exec(query);
-    console.log("Query executed. stmt.length: " + stmt.length);
-    const tableBody = document.getElementById('dashboard-body');
-    const header = document.getElementById("dashboard-header");
-    tableBody.innerHTML = ''; // Clear previous results
-    header.innerHTML = ''; // Clear previous header
-
-    if (!stmt.length || !stmt[0].values.length) {
-      document.getElementById('error').textContent = 'No data found in the table.';
-      return;
-    }
-
-    const columns = stmt[0].columns;
-    const rows = stmt[0].values;
-    console.log("Number of rows fetched: " + rows.length);
-
-    // Filter rows
-    const filteredRows = rows.filter(row => {
-      const rowString = row.join(" ").toLowerCase();
-      const matchesSearch = searchTerm === "" || rowString.includes(searchTerm.toLowerCase());
-      let unfinishedOnly = true;
-      if (filterUnfinishedActive) {
-        const finishedIndex = columns.indexOf("finished");
-        unfinishedOnly = !(row[finishedIndex] && row[finishedIndex].toString().trim() !== "");
-      }
-      return matchesSearch && unfinishedOnly;
-    });
-
-    // Generate table header
-    let headerRow = document.createElement("tr");
-    columns.forEach(col => {
-      let th = document.createElement("th");
-      th.textContent = col;
-      headerRow.appendChild(th);
-    });
-    header.appendChild(headerRow);
-
-    // Populate table body
-    filteredRows.forEach((rowData) => {
-      const tr = createTableRow(rowData, columns);
-      tableBody.appendChild(tr);
-    });
-
+    const docRef = await addDoc(itemsCollectionRef, dataToAdd);
+    console.log("New item added with ID:", docRef.id);
+    // UI will update automatically via onSnapshot listener
   } catch (error) {
-    handleError('Error loading data:', error);
+    handleError("Error adding new item:", error);
   }
 }
 
-// Helper to create a table row TR element
-function createTableRow(rowData, columns) {
+// Delete a task (Example function)
+async function deleteTask(itemId) {
+  if (!itemId) {
+    handleError("Delete failed: No item ID provided.");
+    return;
+  }
+  // Find item details for confirmation message
+  const itemToDelete = dashboardItems.find(item => item.id === itemId);
+  const confirmMsg = itemToDelete
+    ? `Are you sure you want to delete task: ${itemToDelete.name || itemToDelete.code_full || itemId}?`
+    : `Are you sure you want to delete item ${itemId}?`;
+
+  if (!confirm(confirmMsg)) {
+    return;
+  }
+  console.log(`Deleting item ${itemId}`);
+  const itemDocRef = doc(db, collectionName, itemId);
+  try {
+    await deleteDoc(itemDocRef);
+    console.log("Item deleted successfully.");
+    // UI will update automatically via onSnapshot listener
+  } catch (error) {
+    handleError(`Error deleting item ${itemId}:`, error);
+  }
+}
+
+// --- UI Rendering and Interaction ---
+
+// Render the table based on the local dashboardItems cache, search term, and filters
+function renderTable() {
+  // If showing single task, let displaySingleTask handle rendering
+  if (showingSingleRandomTask) return;
+
+  const tableBody = document.getElementById('dashboard-body');
+  const header = document.getElementById("dashboard-header");
+  tableBody.innerHTML = ''; // Clear previous results
+  header.innerHTML = ''; // Clear previous header
+  document.getElementById("randomTaskOutput").innerHTML = ""; // Clear random task display
+
+  if (!dashboardItems.length) {
+    tableBody.innerHTML = '<tr><td colspan="100%">No data found in Firestore collection.</td></tr>';
+    return;
+  }
+
+  // Determine columns from the first item (assuming consistent structure)
+  // Exclude the 'id' field we added from the header/display rows directly
+  const columns = Object.keys(dashboardItems[0]).filter(key => key !== 'id');
+
+  // Generate table header
+  let headerRow = document.createElement("tr");
+  columns.forEach(col => {
+    let th = document.createElement("th");
+    th.textContent = col;
+    headerRow.appendChild(th);
+  });
+  header.appendChild(headerRow);
+
+  // Filter items based on search term and unfinished filter
+  const filteredItems = dashboardItems.filter(item => {
+    // Search logic: check if search term exists in any field value (case-insensitive)
+    const itemString = Object.values(item).join(" ").toLowerCase();
+    const matchesSearch = currentSearchTerm === "" || itemString.includes(currentSearchTerm.toLowerCase());
+
+    // Unfinished filter logic: check if 'finished' field is missing, null, or empty string
+    let isUnfinished = true;
+    if (item.hasOwnProperty('finished')) {
+        const finishedValue = item.finished;
+        // Consider null, undefined, empty string, or specific 'false' values as unfinished
+        isUnfinished = !finishedValue || (typeof finishedValue === 'string' && finishedValue.trim() === '');
+    }
+    const matchesFilter = !filterUnfinishedActive || isUnfinished;
+
+    return matchesSearch && matchesFilter;
+  });
+
+  // Populate table body with filtered items
+  if (filteredItems.length === 0) {
+      tableBody.innerHTML = '<tr><td colspan="100%">No data matches the current search/filter.</td></tr>';
+  } else {
+      filteredItems.forEach((item) => {
+        const tr = createTableRow(item, columns);
+        tableBody.appendChild(tr);
+      });
+  }
+}
+
+// Helper to create a table row TR element from a Firestore item object
+function createTableRow(item, columns) {
     const tr = document.createElement('tr');
-    const finishedIndex = columns.indexOf("finished");
-    const codeFullIndex = columns.indexOf("code_full");
-    const codeFullValue = rowData[codeFullIndex];
-    let finishedValue = rowData[finishedIndex];
+    const finishedValue = item.finished;
+    const itemId = item.id; // Firestore document ID
 
-    // Copy rowData to avoid modifying the original array during formatting
-    let displayRowData = [...rowData];
-
-    if (finishedValue && finishedValue.toString().trim() !== "") {
-      let finishedStr = finishedValue.toString().trim();
-      if (finishedStr.indexOf(',') !== -1) {
-        // If multiple timestamps exist, use the last one for display
-        const parts = finishedStr.split(',').map(s => s.trim());
-        finishedStr = parts[parts.length - 1];
-      }
-      displayRowData[finishedIndex] = formatDate(finishedStr);
+    // Add 'done' class if the item is finished
+    if (finishedValue && (typeof finishedValue !== 'string' || finishedValue.trim() !== '')) {
       tr.classList.add('done');
-    } else {
-      finishedValue = null; // Normalize for checks
     }
 
+    // Attach click listener to the row
     tr.addEventListener('click', () => {
-      currentGroupCode = codeFullValue; // Set for potential actions
-      console.log("Row clicked. codeFullValue:", codeFullValue, "finishedValue:", finishedValue);
-      if (document.getElementById('doneModal')) {
-            openDoneModal(codeFullValue);
-      } else {
-            console.error("doneModal element not found!");
-      }
+      currentItemId = itemId; // Store Firestore ID for modal actions
+      const codeFullValue = item.code_full || 'N/A'; // Get code_full for display
+      console.log("Row clicked. Item ID:", itemId, "code_full:", codeFullValue);
+      openDoneModal(codeFullValue, itemId); // Pass ID to modal opener
     });
 
-    displayRowData.forEach((cell) => {
+    // Create cells based on the determined column order
+    columns.forEach(colName => {
       const td = document.createElement('td');
-      td.textContent = cell ?? ''; // Use nullish coalescing for cleaner empty cells
+      let cellValue = item[colName];
+
+      // Format 'finished' date if it exists and is not empty
+      if (colName === 'finished' && cellValue && (typeof cellValue !== 'string' || cellValue.trim() !== '')) {
+        // Handle potential multiple timestamps (if migrated from old format)
+        if (typeof cellValue === 'string' && cellValue.includes(',')) {
+            const parts = cellValue.split(',').map(s => s.trim());
+            cellValue = parts[parts.length - 1]; // Use the last one
+        }
+        td.textContent = formatDate(cellValue); // Format the date/timestamp
+      } else {
+        td.textContent = cellValue ?? ''; // Use nullish coalescing for cleaner empty cells
+      }
       tr.appendChild(td);
     });
     return tr;
 }
 
-
+// Update progress chart based on local dashboardItems cache
 function updateProgress() {
   try {
     if (typeof Chart === 'undefined') {
       console.error('Chart.js library is not loaded');
       return;
     }
-    let query = 'SELECT * FROM "' + currentTableName + '"';
-    const stmt = globalDB.exec(query);
-    if (!stmt.length) return;
-    const columns = stmt[0].columns;
-    const rows = stmt[0].values;
 
-    // Aggregate finished tasks per day (YYYY-MM-DD)
     const finishedPerDay = {};
-    rows.forEach(row => {
-      const finishedIndex = columns.indexOf("finished");
-      if (row[finishedIndex] && row[finishedIndex].toString().trim() !== "") {
-        const finishedDate = new Date(row[finishedIndex]);
-        // Format as YYYY-MM-DD
-        const year = finishedDate.getFullYear();
-        const month = ("0" + (finishedDate.getMonth()+1)).slice(-2);
-        const day = ("0" + finishedDate.getDate()).slice(-2);
-        const dateKey = `${year}-${month}-${day}`;
-        finishedPerDay[dateKey] = (finishedPerDay[dateKey] || 0) + 1;
-      }
-    });
-
-    // Compute total unique tasks and uniquely finished tasks based on "code_full"
-    const uniqueTasks = new Set();
-    const finishedTasks = new Set();
-    rows.forEach(row => {
-      const codeIndex = columns.indexOf("code_full");
-      const finishedIndex = columns.indexOf("finished");
-      if (row[codeIndex]) {
-        uniqueTasks.add(row[codeIndex]);
-        if (row[finishedIndex] && row[finishedIndex].toString().trim() !== "") {
-          finishedTasks.add(row[codeIndex]);
+    let totalFinishedCount = 0;
+    dashboardItems.forEach(item => {
+      const finishedValue = item.finished;
+      if (finishedValue && (typeof finishedValue !== 'string' || finishedValue.trim() !== '')) {
+        totalFinishedCount++;
+        let dateToFormat = finishedValue;
+        // Handle potential multiple timestamps string
+        if (typeof finishedValue === 'string' && finishedValue.includes(',')) {
+            const parts = finishedValue.split(',').map(s => s.trim());
+            dateToFormat = parts[parts.length - 1];
         }
+        // Format date key (handle Timestamp or Date string)
+        let dateKey = '';
+        try {
+            let dateObj;
+            if (dateToFormat instanceof Timestamp) dateObj = dateToFormat.toDate();
+            else dateObj = new Date(dateToFormat);
+
+            if (!isNaN(dateObj)) {
+                const year = dateObj.getFullYear();
+                const month = ("0" + (dateObj.getMonth() + 1)).slice(-2);
+                const day = dateObj.getDate().toString().padStart(2, '0');
+                dateKey = `${year}-${month}-${day}`;
+                finishedPerDay[dateKey] = (finishedPerDay[dateKey] || 0) + 1;
+            }
+        } catch (e) { console.warn("Could not parse date for progress chart:", dateToFormat, e); }
       }
     });
-    const totalTasks = uniqueTasks.size;
-    const unfinishedTasksCount = totalTasks - finishedTasks.size;
-    document.getElementById("unfinishedCount").textContent = "Unfinished tasks: " + unfinishedTasksCount + " / " + totalTasks;
 
-    // Prepare data for chart: sort dates ascending, with fallback if no finished tasks are found
+    const totalTasks = dashboardItems.length; // Total items = total tasks
+    const unfinishedTasksCount = totalTasks - totalFinishedCount;
+    document.getElementById("unfinishedCount").textContent = `Unfinished tasks: ${unfinishedTasksCount} / ${totalTasks}`;
+
+    // Prepare data for chart
     let labels = Object.keys(finishedPerDay).sort();
     let data = labels.map(label => finishedPerDay[label]);
     if (labels.length === 0) {
@@ -229,10 +293,10 @@ function updateProgress() {
       data = [0];
     }
 
-    // Draw chart using Chart.js (Line Chart) showing tasks achieved per day
+    // Draw chart
     const ctx = document.getElementById("progressChart").getContext("2d");
-    if(window.myChart) {
-      window.myChart.destroy();
+    if (window.myChart) {
+      window.myChart.destroy(); // Destroy previous chart instance
     }
     window.myChart = new Chart(ctx, {
       type: 'line',
@@ -242,343 +306,223 @@ function updateProgress() {
           label: 'Tasks Achieved',
           data: data,
           borderColor: '#4CAF50',
-          backgroundColor: '#4CAF50', // Changed for better visibility if needed, or keep as borderColor
-          fill: false,
+          backgroundColor: 'rgba(76, 175, 80, 0.2)', // Optional fill
+          fill: true,
           tension: 0.1
         }]
       },
       options: {
         responsive: true,
         plugins: {
-          title: {
-            display: true,
-            text: 'Tasks Achieved Per Day'
-          }
+          title: { display: true, text: 'Tasks Achieved Per Day' },
+          legend: { display: false }
         },
         scales: {
-          x: {
-            title: {
-              display: true,
-              text: 'Date'
-            }
-          },
+          x: { title: { display: true, text: 'Date' } },
           y: {
-            title: {
-              display: true,
-              text: 'Number of Tasks'
-            },
+            title: { display: true, text: 'Number of Tasks' },
             beginAtZero: true,
-             ticks: { // Ensure y-axis shows only whole numbers
-                stepSize: 1,
-                precision: 0
-            }
+            ticks: { stepSize: 1, precision: 0 }
           }
         }
       }
     });
   } catch (error) {
-    console.error("Error updating progress analysis:", error);
+    handleError("Error updating progress analysis:", error);
   }
 }
 
-// Modal interactions
-function openDoneModal(codeFull) {
-  currentGroupCode = codeFull;
-  document.getElementById('codeFullText').textContent = codeFull;
-    console.log("Opening doneModal. codeFull:", codeFull);
+// --- Modal Interactions ---
+
+function openDoneModal(codeFull, itemId) {
+  currentItemId = itemId; // Store the Firestore ID
+  document.getElementById('codeFullText').textContent = `Task: ${codeFull}`; // Display code_full
+  // Pre-fill rating based on current item data
+  const currentItem = dashboardItems.find(item => item.id === itemId);
+  const ratingSelect = document.getElementById('ratingSelect');
+  if (currentItem && currentItem.Rating && ratingSelect) {
+      const ratingValue = typeof currentItem.Rating === 'string' ? currentItem.Rating.split(',').pop().trim() : currentItem.Rating;
+      ratingSelect.value = ratingValue || 'false';
+  } else if (ratingSelect) {
+      ratingSelect.value = 'false'; // Default if no item or rating found
+  }
+  console.log("Opening doneModal for Item ID:", itemId);
   document.getElementById('doneModal').style.display = 'block';
 }
+
 function closeDoneModal() {
   const modal = document.getElementById('doneModal');
-  if (modal) {
-    modal.style.display = 'none';
-  }
+  if (modal) modal.style.display = 'none';
+  currentItemId = null; // Clear stored ID when modal closes
 }
+
+// This modal seems redundant with doneModal, keeping logic separate for now
 function closeRatingModal() {
   const modal = document.getElementById('ratingModal');
-  if (modal) {
-    modal.style.display = 'none';
-  }
+  if (modal) modal.style.display = 'none';
+  // Avoid clearing currentItemId here if doneModal might still be open
 }
 
-function markTaskAsDone(codeFull) {
-  try {
-    if (!globalDB || !currentTableName) return;
-    const now = new Date().toISOString();
-    // Retrieve existing finished value
-    const result = globalDB.exec(`SELECT finished FROM "${currentTableName}" WHERE "code_full" = '${codeFull}' LIMIT 1`);
-    let existingFinished = "";
-    if (result.length && result[0].values.length) {
-      existingFinished = result[0].values[0][0] || "";
-    }
-    let newFinished;
-    if (existingFinished.trim() === "") {
-      newFinished = now;
-    } else {
-      newFinished = `${existingFinished}, ${now}`;
-    }
-    // Update the finished field with the appended timestamp
-    globalDB.run(`UPDATE "${currentTableName}" SET finished = '${newFinished}' WHERE "code_full" = '${codeFull}'`);
-    persistDatabase();
-    closeDoneModal();
-    if (showingSingleRandomTask) {
-         loadData();
-    } else {
-         loadData(document.getElementById('search').value);
-    }
-  } catch (error) {
-    handleError('Error marking task as done:', error);
+// --- Action Handlers ---
+
+function handleMarkTaskAsDone() {
+  if (!currentItemId) {
+    handleError("Cannot mark task done: No item selected.");
+    return;
   }
+  const now = Timestamp.now(); // Use Firestore Timestamp
+  // Simple overwrite approach for 'finished' timestamp
+  updateTask(currentItemId, { finished: now });
 }
 
-// Submit rating
-function submitRating(ratingValue) {
+function handleSubmitRating(event) {
+  event.preventDefault(); // Prevent form submission
+  if (!currentItemId) {
+    handleError("Cannot submit rating: No item selected.");
+    return;
+  }
+  const ratingSelect = document.getElementById('ratingSelect');
+  const ratingValue = ratingSelect.value;
+
+  // Simple overwrite approach for 'Rating'
+  updateTask(currentItemId, { Rating: ratingValue });
+}
+
+// Pick and display a random unfinished task
+async function pickRandomTask() {
+  showingSingleRandomTask = false; // Reset flag initially
+  document.getElementById("randomTaskOutput").innerHTML = "Picking random task...";
+
   try {
-    // Check if ratingSelect element exists
-    const ratingSelect = document.getElementById('ratingSelect');
-    if (!ratingSelect) {
-      console.warn("ratingSelect element not found, skipping rating submission");
+    // Filter local cache for unfinished items
+    const unfinishedItems = dashboardItems.filter(item => {
+        let isUnfinished = true;
+        if (item.hasOwnProperty('finished')) {
+            const finishedValue = item.finished;
+            isUnfinished = !finishedValue || (typeof finishedValue === 'string' && finishedValue.trim() === '');
+        }
+        return isUnfinished;
+    });
+
+    if (unfinishedItems.length === 0) {
+      document.getElementById("randomTaskOutput").innerHTML = "<strong>All tasks are marked as done!</strong>";
+      renderTable(); // Show the full (empty or all done) table
       return;
     }
-    if (!globalDB || !currentTableName || !currentGroupCode) return;
-    // Use string interpolation to fetch existing rating since SQL.js exec() doesn't support parameters
-    const result = globalDB.exec(`SELECT Rating FROM "${currentTableName}" WHERE "code_full" = '${currentGroupCode}' LIMIT 1`);
-    let existingRating = "";
-    if (result.length && result[0].values.length) {
-      existingRating = result[0].values[0][0] || "";
-    }
-    let newRating;
-    if(existingRating.trim() === "") {
-      newRating = ratingValue;
-    } else {
-      const ratings = existingRating.split(',').map(r => r.trim());
-      if (!ratings.includes(ratingValue)) {
-        newRating = `${existingRating}, ${ratingValue}`;
-      } else {
-        newRating = existingRating;
-      }
-    }
-    // Update the Rating column using string interpolation
-    globalDB.run(`UPDATE "${currentTableName}" SET Rating = '${newRating}' WHERE "code_full" = '${currentGroupCode}'`);
-    persistDatabase();
-    // Log the updated rating value for debugging
-    const check = globalDB.exec(`SELECT Rating FROM "${currentTableName}" WHERE "code_full" = '${currentGroupCode}'`);
-    console.log("Updated rating for", currentGroupCode, ":", check);
-    if (document.getElementById('ratingModal')) {
-      closeRatingModal();
-    } else {
-      console.warn("ratingModal element not found, skipping closeRatingModal");
-    }
-    // Refresh view - if single task, refresh its display, else refresh table
-    if (showingSingleRandomTask) {
-      displaySingleTask(currentGroupCode, true);
-    } else {
-      loadData(document.getElementById('search').value);
-    }
+
+    // Pick random item from the filtered list
+    const randomItem = unfinishedItems[Math.floor(Math.random() * unfinishedItems.length)];
+    console.log("Randomly selected item ID:", randomItem.id);
+
+    // Display only this task
+    displaySingleTask(randomItem.id, true); // true to update the output div
+
   } catch (error) {
-    handleError('Error submitting rating:', error);
+    handleError("Error picking random task:", error);
+    document.getElementById("randomTaskOutput").innerHTML = `<span style="color:red;">Error: ${error.message}</span>`;
+    showingSingleRandomTask = false; // Ensure flag is reset on error
+    renderTable(); // Show full table on error
   }
 }
 
-// View switching
+// Display details and table row(s) for a single item ID
+function displaySingleTask(itemId, updateOutputDiv = false) {
+    const tableBody = document.getElementById('dashboard-body');
+    const header = document.getElementById("dashboard-header");
+    const outputDiv = document.getElementById("randomTaskOutput");
+    tableBody.innerHTML = ''; // Clear table body
+    header.innerHTML = ''; // Clear table header
+    if (updateOutputDiv) outputDiv.innerHTML = ''; // Clear output div
+
+    const item = dashboardItems.find(i => i.id === itemId);
+
+    if (!item) {
+        handleError(`Error displaying single task: Item ID ${itemId} not found in local cache.`);
+        tableBody.innerHTML = '<tr><td colspan="100%">Error loading task details.</td></tr>';
+        if (updateOutputDiv) outputDiv.innerHTML = `<span style="color:red;">Error displaying task details.</span>`;
+        showingSingleRandomTask = false; // Reset flag if item not found
+        return;
+    }
+
+    // Determine columns (excluding 'id')
+    const columns = Object.keys(item).filter(key => key !== 'id');
+
+    // Generate header
+    let headerRow = document.createElement("tr");
+    columns.forEach(col => {
+        let th = document.createElement("th");
+        th.textContent = col;
+        headerRow.appendChild(th);
+    });
+    header.appendChild(headerRow);
+
+    // Create and append the single table row
+    const tr = createTableRow(item, columns);
+    tableBody.appendChild(tr);
+
+    // Update the randomTaskOutput div if requested
+    if (updateOutputDiv) {
+        let detailsHtml = `<strong>Random Task Selected:</strong><br><div class="task-details">`;
+        columns.forEach(colName => {
+            let cellValue = item[colName] ?? '';
+            if (colName === 'finished' && cellValue && (typeof cellValue !== 'string' || cellValue.trim() !== '')) {
+                cellValue = formatDate(cellValue);
+            }
+            if (cellValue.toString().trim() !== '') {
+                detailsHtml += `<span><strong>${colName}:</strong> ${cellValue}</span><br>`;
+            }
+        });
+        detailsHtml += `</div>`;
+        outputDiv.innerHTML = detailsHtml;
+    }
+    // Ensure the flag is set correctly when displaying a single task
+    showingSingleRandomTask = true;
+}
+
+// Clear 'finished' and 'Rating' fields for all documents
+async function clearAllMarkings() {
+    if (!confirm('Are you sure you want to clear the "finished" marking and "Rating" for ALL tasks? This cannot be undone!')) {
+        return;
+    }
+
+    try {
+        // Use a batched write to perform multiple updates efficiently
+        const batch = writeBatch(db);
+
+        dashboardItems.forEach(item => {
+            const itemRef = doc(db, collectionName, item.id);
+            batch.update(itemRef, { finished: null, Rating: null });
+        });
+
+        await batch.commit();
+        console.log('Successfully cleared "finished" and "Rating" for all documents.');
+        alert('Successfully cleared markings for all tasks.');
+    } catch (error) {
+        handleError('Error clearing all markings:', error);
+        alert('Failed to clear markings. See console for details.');
+    }
+}
+
+// --- View Switching ---
+
 function showDashboard() {
   document.getElementById('dashboardView').style.display = 'block';
   document.getElementById('progressView').style.display = 'none';
-  // Ensure data is loaded correctly when switching back, unless showing single task
-   if (!showingSingleRandomTask) {
-        loadData(document.getElementById('search').value);
-   }
+  // If we were showing a single task, reset to show the full table
+  if (showingSingleRandomTask) {
+      showingSingleRandomTask = false;
+      renderTable(); // Re-render the full table with current filters
+  }
 }
+
 function showProgress() {
   document.getElementById('dashboardView').style.display = 'none';
   document.getElementById('progressView').style.display = 'block';
   updateProgress();
 }
 
-let dbFileHandle = null;
+// --- Event Listeners Setup ---
 
-async function setDbFile() {
-  try {
-    // Ask user to select the file location for the DB file.
-    dbFileHandle = await window.showSaveFilePicker({
-      suggestedName: "data_bifie.db",
-      types: [{
-        description: "SQLite DB",
-        accept: { "application/x-sqlite3": [".db"] }
-      }]
-    });
-    console.log("DB file handle set.");
-  } catch (err) {
-    console.error("Error setting DB file handle:", err);
-  }
-}
-
-async function persistDatabase() {
-  if (!globalDB) return;
-  const exported = globalDB.export();
-  const base64Str = uint8ArrayToBase64(exported);
-  localStorage.setItem('data_bifie_db', base64Str);
-  if (dbFileHandle) {
-    try {
-      const writable = await dbFileHandle.createWritable();
-      await writable.write(base64Str);
-      await writable.close();
-      console.log("Database auto-updated on local file.");
-    } catch (err) {
-      console.error("Error auto-updating local file:", err);
-    }
-  } else {
-    console.log("DB file handle not set; local file not auto-updated.");
-  }
-}
-
-// Function to write the updated database to the local file "data/data_bifie.db"
-function writeDatabaseFile(dbBase64) {
-  // Using the write_to_file tool in our context, we can write the complete content.
-  // This function will be called from persistDatabase(), updating the database file.
-  // Since the write_to_file tool creates directories as needed, this will overwrite the file.
-  // The exported database is stored in base64, and initDatabase() will convert from base64 to Uint8Array.
-  // The local file now will contain the base64 string.
-  // In a real-world scenario, you might need to convert back to binary.
-  // For our client-side SQL.js environment, we are using base64 consistently.
-  writeContentToFile("data/data_bifie.db", dbBase64);
-}
-
-// Helper function to interface with the write_to_file tool (simulated here)
-function writeContentToFile(path, content) {
-  // This is a placeholder function. In our environment, you would use the write_to_file tool.
-  // For example, you might call:
-  // <write_to_file>
-  // <path>data/data_bifie.db</path>
-  // <content>[dbBase64]</content>
-  // </write_to_file>
-  // Here, we simply log the intended action.
-  console.log("Writing updated database to file:", path);
-}
-
-// Pick and display a random unfinished task
-function pickRandomTask() {
-  try {
-    if (!globalDB || !currentTableName) throw new Error("Database not ready");
-
-    const stmt = globalDB.exec(`SELECT * FROM "${currentTableName}"`);
-    if (!stmt.length) throw new Error("No tasks found");
-
-    const columns = stmt[0].columns;
-    const rows = stmt[0].values;
-    const finishedIndex = columns.indexOf("finished");
-    const codeFullIndex = columns.indexOf("code_full");
-
-    // Find unique unfinished code_full values
-    const unfinishedCodeFulls = Array.from(new Set(
-      rows.filter(row => !(row[finishedIndex] && row[finishedIndex].toString().trim()))
-          .map(row => row[codeFullIndex])
-          .filter(Boolean) // Ensure code_full is not null/empty
-    ));
-
-    if (unfinishedCodeFulls.length === 0) {
-      document.getElementById("randomTaskOutput").innerHTML = "<strong>All tasks are marked as done!</strong>";
-      loadData(); // Show all (likely done) tasks
-      return;
-    }
-
-    // Pick random code_full
-    const randomCodeFull = unfinishedCodeFulls[Math.floor(Math.random() * unfinishedCodeFulls.length)];
-    console.log("Randomly selected code_full:", randomCodeFull);
-
-    // Display only this task in the table and its details above
-    displaySingleTask(randomCodeFull, true); // true to update the output div as well
-
-    // Update state
-    showingSingleRandomTask = true;
-    document.getElementById('search').value = ''; // Clear search bar
-
-  } catch (error) {
-    handleError("Error picking random task:", error);
-    document.getElementById("randomTaskOutput").innerHTML = `<span style="color:red;">Error: ${error.message}</span>`;
-  }
-}
-
-// Display details and table rows for a single code_full
-function displaySingleTask(codeFull, updateOutputDiv = false) {
-    try {
-        if (!globalDB || !currentTableName) return;
-
-        // Fetch all rows for the specific code_full
-        const stmt = globalDB.prepare(`SELECT * FROM "${currentTableName}" WHERE "code_full" = ?`);
-        stmt.bind([codeFull]);
-
-        const tableBody = document.getElementById('dashboard-body');
-        const header = document.getElementById("dashboard-header");
-        tableBody.innerHTML = ''; // Clear table body
-        header.innerHTML = ''; // Clear table header
-
-        let columns = null;
-        let firstRowData = null; // To store data for the output div
-
-        // Process results
-        while (stmt.step()) {
-            const rowData = stmt.get(); // Get row data as array
-            if (!columns) {
-                columns = stmt.getColumnNames(); // Get column names
-
-                // Ensure header is generated (only once)
-                let headerRow = document.createElement("tr");
-                columns.forEach(col => {
-                    let th = document.createElement("th");
-                    th.textContent = col;
-                    headerRow.appendChild(th);
-                });
-                header.appendChild(headerRow);
-                 firstRowData = rowData; // Store first row data for display above table
-            }
-            // Create and append table row
-            const tr = createTableRow(rowData, columns);
-            tableBody.appendChild(tr);
-        }
-        stmt.free(); // Release statement
-
-        // Update the randomTaskOutput div if requested and data exists
-        if (updateOutputDiv && firstRowData && columns) {
-            let detailsHtml = `<strong>Random Task Selected:</strong><br><div class="task-details">`;
-            columns.forEach((colName, index) => {
-                // Only display non-empty fields
-                let cellValue = firstRowData[index] ?? '';
-                 // Format date if it's the 'finished' column and not empty
-                 if (colName === 'finished' && cellValue.toString().trim() !== '') {
-                    cellValue = formatDate(cellValue);
-                 }
-                 if(cellValue.toString().trim() !== '') { // Only show fields with content
-                    detailsHtml += `<span><strong>${colName}:</strong> ${cellValue}</span><br>`;
-                 }
-            });
-            detailsHtml += `</div>`;
-            document.getElementById("randomTaskOutput").innerHTML = detailsHtml;
-        } else if (updateOutputDiv) {
-             document.getElementById("randomTaskOutput").innerHTML = `Details for ${codeFull} could not be retrieved.`;
-        }
-
-    } catch (error) {
-        handleError('Error displaying single task:', error);
-        tableBody.innerHTML = '<tr><td colspan="100%">Error loading task details.</td></tr>'; // Show error in table
-        header.innerHTML = ''; // Clear header on error
-         if (updateOutputDiv) {
-            document.getElementById("randomTaskOutput").innerHTML = `<span style="color:red;">Error displaying task details: ${error.message}</span>`;
-         }
-    }
-}
-
-
-// Generic error handler
-function handleError(context, error) {
-  console.error(context, error);
-  const errorDiv = document.getElementById('error');
-  if (errorDiv) {
-    errorDiv.textContent = `${context} ${error.message}`;
-  }
-}
-
-// Event Listeners Setup
 document.addEventListener('DOMContentLoaded', () => {
   // View Buttons
   document.getElementById('dashboardBtn').addEventListener('click', showDashboard);
@@ -589,84 +533,35 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('filterUnfinished').addEventListener('click', () => {
     filterUnfinishedActive = !filterUnfinishedActive;
     document.getElementById('filterUnfinished').textContent = filterUnfinishedActive ? "Show All Tasks" : "Show Unfinished Only";
-    loadData(document.getElementById('search').value); // Reload with current search, resets single view
+    renderTable(); // Re-render with current search, resets single view
   });
 
   // Search Input
   document.getElementById('search').addEventListener('input', (event) => {
-    loadData(event.target.value); // Search resets single view
+    currentSearchTerm = event.target.value; // Store search term
+    renderTable(); // Re-render with current search, resets single view
   });
 
   // Done Modal Buttons
-  document.getElementById('markDoneButton').addEventListener('click', () => markTaskAsDone(currentGroupCode));
+  document.getElementById('markDoneButton').addEventListener('click', handleMarkTaskAsDone);
 
   // Rating Modal Buttons
   document.getElementById('ratingForm').addEventListener('submit', (event) => {
     event.preventDefault();
-    submitRating(document.getElementById('ratingSelect').value);
+    handleSubmitRating(event);
   });
   document.getElementById('closeModal').addEventListener('click', closeDoneModal);
-  
-  // Download DB Button
-  document.getElementById('downloadDbBtn').addEventListener('click', downloadDatabase);
+
+  // Clear DB Button
+  document.getElementById('clear-db').addEventListener('click', clearAllMarkings);
 
   // Initial setup
   showDashboard(); // Show dashboard by default
-  initDatabase();  // Load database
+  listenForDataUpdates(); // Start listening for Firestore updates
   document.addEventListener('keydown', (event) => {
     if (event.key === "Escape") {
       closeDoneModal();
       closeRatingModal();
-  }
-});
-
-// Function to trigger database download
-function downloadDatabase() {
-  if (!globalDB) {
-    alert("Database not loaded.");
-    return;
-  }
-  try {
-    const exportedData = globalDB.export(); // Uint8Array
-    const blob = new Blob([exportedData], { type: 'application/vnd.sqlite3' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'data_bifie_updated.db'; // Suggest a new name to avoid accidental overwrite
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    console.log("Database download initiated.");
-  } catch (error) {
-    handleError("Error downloading database:", error);
-  }
-}
-});
-
-// Auto-refresh (polling) - only when dashboard is visible and not showing single task
-setInterval(() => {
-  const dashboardVisible = document.getElementById('dashboardView').style.display !== 'none';
-  if (dashboardVisible && !showingSingleRandomTask) {
-    console.log("Auto-refreshing dashboard...");
-    loadData(document.getElementById('search').value); // Refresh with current search term
-  }
-}, 15000);
-
-document.getElementById('clear-db').addEventListener('click', function() {
-  if (confirm('Are you sure you want to clear the done marking and rating?')) {
-    if (!globalDB || !currentTableName) {
-      alert("Database not loaded.");
-      return;
     }
-    // Clear the markings directly in the in-memory database
-    globalDB.run(`UPDATE "${currentTableName}" SET finished = NULL, Rating = NULL`);
-    console.log("Clear query executed for table " + currentTableName);
-    // Persist the updated database to localStorage 
-    persistDatabase();
-    console.log("Database persisted after clear update.");
-    // Reload the dashboard from the current in-memory database (which reflects cleared state)
-    loadData(document.getElementById('search').value);
-    alert("Database markings cleared successfully.");
-  }
+  });
 });
