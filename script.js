@@ -50,6 +50,16 @@ function formatDate(dateInput) {
   return `${year}-${month}-${day} ${hour}:${minute}`;
 }
 
+// Generic error handler
+function handleError(context, error) {
+  console.error(context, error);
+  const errorDiv = document.getElementById('error');
+  if (errorDiv) {
+    // Display a user-friendly message, log the full error to console
+    errorDiv.textContent = `Error: ${context}. See console for details.`;
+  }
+}
+
 // --- Firestore Interaction Functions ---
 
 // Listen for real-time updates and load initial data
