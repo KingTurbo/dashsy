@@ -119,25 +119,31 @@ function listenForDataUpdates() {
   });
 }
 
+
 // Update a task (mark as done, change rating, etc.)
 async function updateTask(itemId, dataToUpdate) {
   if (!itemId) {
     handleError("Update failed: No item ID provided.");
     return;
   }
-  console.log(`Updating item ${itemId} with:`, dataToUpdate);
+  console.log(`Updating item ${itemId} with:`, dataToUpdate); // Log *before* trying
   const itemDocRef = doc(db, collectionName, itemId);
   try {
     await updateDoc(itemDocRef, dataToUpdate);
-    console.log("Item updated successfully in Firestore.");
+    console.log("Item updated successfully in Firestore:", itemId); // Log success specifically
     // UI will update automatically via onSnapshot listener
     // Close modals if the update originated from one
     closeDoneModal();
     closeRatingModal(); // Close rating modal if it was used
   } catch (error) {
-    handleError(`Error updating item ${itemId}:`, error);
+    // *** ENHANCED LOGGING ***
+    console.error(`Firestore update failed for item ${itemId}:`, error);
+    console.error("Error Code:", error.code); // Log the specific Firebase error code
+    console.error("Error Message:", error.message); // Log the Firebase error message
+    handleError(`Error updating item ${itemId} (Code: ${error.code})`, error); // Pass more info to UI handler
   }
 }
+
 
 // Add a new task (Example function)
 async function addTask(newItemData) {
@@ -455,7 +461,6 @@ function handleMarkTaskAsDone() {
   // Simple overwrite approach for 'finished' timestamp
   updateTask(currentItemId, { finished: now });
 }
-
 function handleSubmitRating(event) {
   event.preventDefault(); // Prevent form submission
   if (!currentItemId) {
@@ -463,18 +468,18 @@ function handleSubmitRating(event) {
     return;
   }
   const ratingSelect = document.getElementById('ratingSelect');
-  let ratingValue = ratingSelect.value;
+  let ratingValue = ratingSelect.value; // This is currently a string ('easy', 'medium', etc.)
 
-  // Convert 'true'/'false' strings from dropdown to boolean if needed, or keep as string/number
-  // Or parse to number if your ratings are numeric
-  // Example: If you want numeric ratings 1-5, but dropdown has strings:
+  console.log(`Preparing to update rating for ${currentItemId} with value:`, ratingValue); // Add log before calling updateTask
+
+  // If Firestore/Rules expect a number, you would convert here:
   // if (!isNaN(parseInt(ratingValue))) {
-  //    ratingValue = parseInt(ratingValue);
-  // } else if (ratingValue === 'false') { // Handle 'false' explicitly if needed
-  //    ratingValue = null; // Or 0, or keep as 'false' string
+  //     ratingValue = parseInt(ratingValue);
+  // } else {
+  //     // Handle non-numeric ratings appropriately, maybe map 'easy' to 1, etc.
+  //     // Or maybe keep as string if that's intended.
   // }
 
-  // Simple overwrite approach for 'Rating'
   updateTask(currentItemId, { Rating: ratingValue });
 }
 
