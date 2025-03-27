@@ -130,7 +130,7 @@ async function addTask(newItemData) {
 // Delete a task (Example function)
 async function deleteTask(itemId) {
   if (!itemId) {
-    handleError("Delete failed: No item ID provided.");
+    handleError("Update failed: No item ID provided.");
     return;
   }
   // Find item details for confirmation message
